@@ -1,0 +1,12 @@
+# brain-lmm — dependencies.  Requires Python 3.10+ (PEP 604 `X | None` type syntax).
+#
+# The engine itself (engine/brain.py) is PURE standard library — zero dependencies.
+# Only the runtime's file I/O layer needs one package:
+
+PyYAML>=6.0          # read/write the human-editable agents/<name>/memory/*.yaml stores (engine/runtime.py)
+
+# ── Optional (uncomment if you want the extras) ───────────────────────────────────────────────────
+# yfinance>=0.2      # richer market data — fundamentals + news for `./brain market info|news`.
+#                    #   `market quote` / `market history` already work without it (stdlib Yahoo client).
+# coverage>=7.0      # measure test coverage (config in engine/.coveragerc):
+#                    #   cd engine && python3 -m coverage run -a --source=. test_*.py && python3 -m coverage report

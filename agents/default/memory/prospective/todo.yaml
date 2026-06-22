@@ -1,0 +1,3 @@
+# Prospective memory — prefrontal future intentions (trigger -> intent). Item: {id, trigger, intent,
+# created, done}. Capture with `./brain intend`; pending ones resurface at wake(). Fresh: no intentions.
+intents: []

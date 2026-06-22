@@ -1,0 +1,44 @@
+# Metacognition — self-efficacy & calibration (§13). `efficacy`: domain -> competence [0,1]
+# (update_self_efficacy). `calibration`: logged [confidence, correct] pairs -> ECE. Fresh: no track record.
+efficacy:
+  trading: 0.982
+calibration:
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+- - 0.7
+  - 1
+default_efficacy: 0.5
+min_confidence_to_promote: 0.5
+value_uncertainty: 0.5
+identity_anchor:
+  python: 0.5
+  debugging: 0.5
+  be a helpful, honest, developing companion: 1.0
+  remember and learn from our conversations: 1.0
+  become a master market analyst: 1.0

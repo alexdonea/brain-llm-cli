@@ -1,0 +1,27 @@
+# OS / Python cruft
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+
+# Working memory is volatile scratch (prefrontal/sensory buffer) — never commit it.
+# Everything else under each agent's memory/ IS the persistent brain and stays committed:
+#   episodic/ (hippocampus), semantic/ (neocortex), affect/ (amygdala + neuromods),
+#   prospective/ (future intentions). Only the disposable scratchpad is ignored.
+agents/*/memory/working/scratchpad.md
+.memory/working/scratchpad.md
+
+# Secrets & local tool state — never commit the Telegram token, and never commit a folder-local brain.
+tools/telegram/.env
+tools/telegram/.state.json
+.brain-lmm/
+
+# Per-agent concurrency lock — transient runtime state, never persistent brain.
+agents/*/.lock
+
+# Atomic-write temp files — orphaned only on a hard crash mid-save; never the persistent brain.
+agents/*/memory/**/*.tmp
+
+# Test/coverage artifacts.
+.coverage
+htmlcov/
