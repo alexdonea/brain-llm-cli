@@ -1,0 +1,51 @@
+name: tests
+
+# Run the unit suite on every push and pull request.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref cancels an in-progress run.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The engine + the lexical fallback path: pure standard library plus PyYAML, no wordllama / numpy.
+  # This is the configuration semantic.py must degrade into, so we test it across every supported Python.
+  unit:
+    name: unit (py${{ matrix.python }}, no wordllama)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install engine deps + test runner
+        run: pip install pyyaml pytest
+      - name: Run the suite (lexical fallback path)
+        run: python -m pytest tests -q
+
+  # The semantic recall path: the full required dependencies, including wordllama (numpy-only, offline).
+  # One Python is enough here; the matrix above already covers version spread.
+  semantic:
+    name: semantic backend (py3.12, wordllama)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install full deps + test runner
+        run: pip install -r requirements.txt pytest
+      - name: Run the suite (semantic recall path)
+        run: python -m pytest tests -q

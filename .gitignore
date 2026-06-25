@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 .venv/
+.claude/
 
 # Working memory is volatile scratch (prefrontal/sensory buffer) — never commit it.
 # Everything else under each agent's memory/ IS the persistent brain and stays committed:
@@ -10,11 +11,14 @@ __pycache__/
 #   prospective/ (future intentions). Only the disposable scratchpad is ignored.
 agents/*/memory/working/scratchpad.md
 .memory/working/scratchpad.md
+# Live-view activity log — transient signal that `live` tails to animate; rebuilt by every mind-event.
+agents/*/memory/working/activations.jsonl
+.memory/working/activations.jsonl
 
 # Secrets & local tool state — never commit the Telegram token, and never commit a folder-local brain.
 tools/telegram/.env
 tools/telegram/.state.json
-.brain-lmm/
+.brain-llm/
 
 # Per-agent concurrency lock — transient runtime state, never persistent brain.
 agents/*/.lock
@@ -25,3 +29,14 @@ agents/*/memory/**/*.tmp
 # Test/coverage artifacts.
 .coverage
 htmlcov/
+
+# Semantic-search assets.
+#   models/wordllama/  : the VENDORED 1.8MB tokenizer — COMMITTED (so recall is fully local & offline; the
+#                        16MB weights ship inside the `wordllama` pip package). It is intentionally tracked.
+#   embeddings.*       : per-agent vector cache — DERIVED, rebuilt from episodic/events.jsonl by `reindex`.
+agents/*/memory/episodic/embeddings.npy
+agents/*/memory/episodic/embeddings.ids.json
+agents/*/memory/episodic/embeddings.*.npy
+agents/*/memory/episodic/embeddings.*.ids.json
+agents/*/memory/semantic/embeddings_facts.npy
+agents/*/memory/semantic/embeddings_facts.ids.json

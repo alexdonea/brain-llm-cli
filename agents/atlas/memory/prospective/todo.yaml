@@ -1,8 +1,0 @@
-# Prospective memory — prefrontal future intentions (trigger -> intent). Item: {id, trigger, intent,
-# created, done}. Capture with `./brain intend`; pending ones resurface at wake(). Fresh: no intentions.
-intents:
-- id: i-0000
-  trigger: NVDA hits $198.50 or $235.00
-  intent: re-evaluate the NVDA paper position vs its thesis and manage exit
-  created: '2026-06-22'
-  done: false

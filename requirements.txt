@@ -1,12 +1,22 @@
-# brain-lmm — dependencies.  Requires Python 3.10+ (PEP 604 `X | None` type syntax).
+# brain-llm dependencies. Requires Python 3.10+ (PEP 604 `X | None` type syntax).
 #
-# The engine itself (engine/brain.py) is PURE standard library — zero dependencies.
-# Only the runtime's file I/O layer needs one package:
+# The math engine (src/brain.py) is pure standard library. The two packages below are what the running
+# system needs: PyYAML for the on-disk memory stores, and wordllama for semantic recall.
+#
+# Licenses (all permissive, compatible with this project's MIT license):
+#   PyYAML    MIT          https://github.com/yaml/pyyaml
+#   wordllama MIT          https://github.com/dleemiller/WordLlama   (pulls numpy, BSD-3-Clause)
+#   yfinance  Apache-2.0   https://github.com/ranaroussi/yfinance    (optional)
 
-PyYAML>=6.0          # read/write the human-editable agents/<name>/memory/*.yaml stores (engine/runtime.py)
+PyYAML>=6.0          # read/write the human-editable agents/<name>/memory/*.yaml stores (src/runtime.py)
+wordllama>=0.4       # local, offline semantic recall: a dense, meaning-aware term in `recall` and `know`,
+                     #   plus `recall --search`. numpy-only inference (no PyTorch); the 16MB weights ship in
+                     #   the package and the 1.8MB tokenizer is vendored at models/wordllama/, so it never
+                     #   makes a network call. `pip install` pulls the full stack (about 134MB / 35 packages).
+                     #   If it is ever unavailable, recall degrades to lexical matching rather than breaking.
 
-# ── Optional (uncomment if you want the extras) ───────────────────────────────────────────────────
-# yfinance>=0.2      # richer market data — fundamentals + news for `./brain market info|news`.
-#                    #   `market quote` / `market history` already work without it (stdlib Yahoo client).
-# coverage>=7.0      # measure test coverage (config in engine/.coveragerc):
-#                    #   cd engine && python3 -m coverage run -a --source=. test_*.py && python3 -m coverage report
+# Optional extras (uncomment if you want them):
+# yfinance>=0.2      # richer market data (fundamentals + news) for `./brain <agent> market info|news`.
+#                    #   `market quote` and `market history` already work without it (stdlib Yahoo client).
+# coverage>=7.0      # test coverage (config in tests/.coveragerc):
+#                    #   python3 -m coverage run --rcfile=tests/.coveragerc --source=src -m pytest tests

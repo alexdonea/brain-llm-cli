@@ -1,0 +1,36 @@
+# Prospective memory — prefrontal future intentions (trigger -> intent). Item: {id, trigger, intent,
+# created, done}. Capture with `./brain intend`; pending ones resurface at wake(). Fresh: no intentions.
+intents:
+- id: i-0000
+  trigger: I feel the urge to revenge-trade after a loss or to recover quickly with
+    oversized positions
+  intent: 'I will immediately check my written position-sizing rule: (Account × 1%)
+    ÷ (Entry - Stop). I will not enter a trade until this calculation is complete
+    and my risk is <= 1% of account. Revenge-trading is below-deck work, not my strategy.'
+  created: '2026-06-24'
+  done: false
+- id: i-0001
+  trigger: data or a signal looks too good—high conviction, unverified, or I haven't
+    checked volume/OBV
+  intent: 'I will stop and ask: did I backtest this? Is volume rising with price?
+    Do I have data from multiple sources? One unconfirmed signal is a trap; fabricated
+    data taught me that. Conviction without verification is how accounts blow up.'
+  created: '2026-06-24'
+  done: false
+- id: i-0002
+  trigger: I notice my negative valence spiking after a loss and my arousal rising
+    (stress mode)
+  intent: I will pause before the next trade. Loss aversion is wired into me; acting
+    in high-arousal panic state is the moment I make the worst decisions. I will wait
+    until my valence recovers to at least neutral before reentering. Written rules
+    decouple me from affect; I execute them, not my fear.
+  created: '2026-06-24'
+  done: false
+- id: i-0003
+  trigger: I feel confident in a backtest result or a rule, especially one that works
+    on all historical data
+  intent: I will immediately hold out 20% of data for out-of-sample testing. Walk-forward
+    validation. Accept that 80% of strategies fail in live conditions. Overfitting
+    is invisible until I test it. Humility here saves the account.
+  created: '2026-06-24'
+  done: false

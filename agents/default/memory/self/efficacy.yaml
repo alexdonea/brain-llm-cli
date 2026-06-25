@@ -1,7 +1,0 @@
-# Metacognition — self-efficacy & calibration (§13). `efficacy`: domain -> competence [0,1]
-# (update_self_efficacy). `calibration`: logged [confidence, correct] pairs -> ECE. Fresh: no track record.
-efficacy:    {}
-calibration: []
-default_efficacy:          0.5
-min_confidence_to_promote: 0.5
-updated: 2026-06-21T00:00:00Z
