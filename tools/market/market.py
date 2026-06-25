@@ -1,5 +1,5 @@
 """
-market.py — give the agent market-data powers (quotes, history, fundamentals, news) over Yahoo Finance.
+market.py - give the agent market-data powers (quotes, history, fundamentals, news) over Yahoo Finance.
 
 Two backends, picked automatically:
   * quote + history  -> a dependency-free Yahoo chart client (stdlib urllib only). Works out of the box,
@@ -7,7 +7,7 @@ Two backends, picked automatically:
   * info + news      -> yfinance if installed (`pip install yfinance`), for fundamentals & headlines;
                         info degrades to the chart metadata when yfinance is absent.
 
-Data is delayed (~15 min) — free, keyless, fine for paper trading and market awareness. Personal/research use.
+Data is delayed (~15 min) - free, keyless, fine for paper trading and market awareness. Personal/research use.
 
 CLI (also wired into the agent CLI as `./brain market <action>`):
   python3 tools/market/market.py quote AAPL MSFT
@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = {"User-Agent": "Mozilla/5.0 (brain-lmm market tool)"}
+UA = {"User-Agent": "Mozilla/5.0 (brain-llm market tool)"}
 CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{t}?range={r}&interval={i}&includePrePost=false"
 
 # valid Yahoo values, surfaced for help text / validation
@@ -247,10 +247,10 @@ def fmt_info(d):
 
 def fmt_news(items, ticker=""):
     if items is None:
-        return "(news needs yfinance — run: pip install yfinance)"
+        return "(news needs yfinance - run: pip install yfinance)"
     if not items:
         return f"{ticker}: (no recent headlines)"
-    return "\n".join(f"  • {it['title']}" + (f"  — {it['publisher']}" if it['publisher'] else "") for it in items)
+    return "\n".join(f"  • {it['title']}" + (f"  - {it['publisher']}" if it['publisher'] else "") for it in items)
 
 
 def save_bars(bars, path):

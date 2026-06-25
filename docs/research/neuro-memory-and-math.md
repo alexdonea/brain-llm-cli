@@ -1,24 +1,24 @@
-# Neuroanatomy, Neuromodulation, Active Inference & Memory Dynamics — State of the Art
+# Neuroanatomy, Neuromodulation, Active Inference & Memory Dynamics - State of the Art
 
-> **Audience:** a technical builder extending `brain-lmm`.
-> **Honesty stance (carried throughout):** everything below is **functional**, not **phenomenal**. Where this report writes "valence," "feeling," "fear," "surprise," or "subjective fitness," it means a *computed signal that behaves like* the named quantity in how it modulates memory, learning, and behaviour. None of it is a claim about felt experience or sentience. This mirrors the stance already baked into `engine/brain.py`: *"This reproduces the function of the brain's memory + affect machinery, not the subjective experience."* The neuroscience itself is also genuinely unsettled in places (e.g. Standard-vs-Multiple-Trace consolidation, whether the Free-Energy Principle is falsifiable, the heterogeneity of serotonin) — those debates are flagged where they arise.
+> **Audience:** a technical builder extending `brain-llm`.
+> **Honesty stance (carried throughout):** everything below is **functional**, not **phenomenal**. Where this report writes "valence," "feeling," "fear," "surprise," or "subjective fitness," it means a *computed signal that behaves like* the named quantity in how it modulates memory, learning, and behaviour. None of it is a claim about felt experience or sentience. This mirrors the stance already baked into `src/brain.py`: *"This reproduces the function of the brain's memory + affect machinery, not the subjective experience."* The neuroscience itself is also genuinely unsettled in places (e.g. Standard-vs-Multiple-Trace consolidation, whether the Free-Energy Principle is falsifiable, the heterogeneity of serotonin) - those debates are flagged where they arise.
 
-This document surveys the relevant state of the art across five linked areas, gives the math/formalism inline for every model, and ends each major section with a **brain-lmm mapping** (what we have / what we lack / what to add). The final section consolidates concrete build proposals with equations.
+This document surveys the relevant state of the art across five linked areas, gives the math/formalism inline for every model, and ends each major section with a **brain-llm mapping** (what we have / what we lack / what to add). The final section consolidates concrete build proposals with equations.
 
 ---
 
-## 0. Where `brain-lmm` stands today (baseline)
+## 0. Where `brain-llm` stands today (baseline)
 
-`engine/brain.py` is a single global pipeline of eight scalar functions:
+`src/brain.py` is a single global pipeline of eight scalar functions:
 
-1. `appraise_to_affect` — OCC-style appraisal → PAD affect (valence/arousal/dominance).
-2. `neuromods_from` — four static gains: `ne=arousal`, `da=clamp(reward)`, `ach=1.0|0.1` (wake/NREM flag), `cortisol=clamp(stress)`.
-3. `salience` — McGaugh arousal-gain on a four-axis base value.
-4. `base_level_activation` — ACT-R `B_i = ln(Σ_k (now − t_k)^(−d))`.
-5. `retention` — FadeMem/Ebbinghaus `v(t) = v0·exp(−λ(t−τ)^β)`, `λ = λ_base·exp(−μI)`.
-6. `retrieval_score` — linear blend of recency + salience + relevance + graph proximity + mood congruence.
-7. `update_mood` — leaky integrator toward baseline `Affect(0, 0.1, 0.5)`.
-8. `consolidation_plan` — CLS promote/forget pass with a REM arousal boost.
+1. `appraise_to_affect` - OCC-style appraisal → PAD affect (valence/arousal/dominance).
+2. `neuromods_from` - four static gains: `ne=arousal`, `da=clamp(reward)`, `ach=1.0|0.1` (wake/NREM flag), `cortisol=clamp(stress)`.
+3. `salience` - McGaugh arousal-gain on a four-axis base value.
+4. `base_level_activation` - ACT-R `B_i = ln(Σ_k (now − t_k)^(−d))`.
+5. `retention` - FadeMem/Ebbinghaus `v(t) = v0·exp(−λ(t−τ)^β)`, `λ = λ_base·exp(−μI)`.
+6. `retrieval_score` - linear blend of recency + salience + relevance + graph proximity + mood congruence.
+7. `update_mood` - leaky integrator toward baseline `Affect(0, 0.1, 0.5)`.
+8. `consolidation_plan` - CLS promote/forget pass with a REM arousal boost.
 
 This is a **competent functional model of a unitary memory + mood loop**, with classic, citable equations. Its central limitation is twofold: (a) anatomically it names ~14 structures (in `docs/memory-keeper.md`) but implements region-specific computation for almost none of them; and (b) every neuromodulator and affect axis is a **static scalar read off the current event**, with no prediction, no learning loop, and no dynamics. The rest of this report is organised around closing those two gaps.
 
@@ -35,7 +35,7 @@ The canonical division [Squire 2004](http://whoville.ucsd.edu/PDFs/384_Squire_%2
 
 Retrieval is itself **dual-process**: *recollection* (hippocampus) vs *familiarity* (perirhinal cortex), often modelled with ROC/signal-detection analysis: `P(old) = R + F`, where `R` is recollection probability and `F` is familiarity as a signal-detection `d′`.
 
-### 1.2 Hippocampal microcircuit — pattern separation & completion
+### 1.2 Hippocampal microcircuit - pattern separation & completion
 
 The most consequential omission in any flat-vector memory model. The canonical computational theory [Knierim & Neunuebel 2016](https://pmc.ncbi.nlm.nih.gov/articles/PMC4792674/); [Rolls 2013](https://pmc.ncbi.nlm.nih.gov/articles/PMC3691555/) assigns:
 
@@ -54,13 +54,13 @@ CA3 toggles between separation and completion depending on input strength vs int
 
 [McClelland, McNaughton & O'Reilly 1995](https://doi.org/10.1037/0033-295X.102.3.419); updated [Kumaran, Hassabis & McClelland 2016](https://doi.org/10.1016/j.tics.2016.05.004): a **fast, sparse, one-shot hippocampus** (`η_H`) and a **slow, overlapping, statistical neocortex** (`η_C ≪ η_H`). Interleaved hippocampal replay during sleep trains cortex gradually, avoiding catastrophic interference. The 2016 update adds that replay should be *weighted/prioritized*, and schema-consistent material can consolidate rapidly.
 
-### 1.4 Thalamus, insula, hypothalamus — the missing dynamical substrates
+### 1.4 Thalamus, insula, hypothalamus - the missing dynamical substrates
 
 - **Thalamus** as relay/gate: nearly all sensory input passes through it; tonic vs burst firing gates information, and thalamocortical loops (with the inhibitory thalamic reticular nucleus, TRN) are a leading substrate for arousal and conscious access. Closed-loop model: cortical `x_c` and thalamic `x_t` with reciprocal weights, TRN lateral inhibition, gating `g ∈ {tonic, burst}`.
 - **Insula / interoceptive inference** [Seth 2013; Barrett & Simmons 2015](https://www.nature.com/articles/nrn3950): emotions as predictions about bodily state that minimize interoceptive prediction error. `ε = s_body − ĝ(μ)`; update `μ̇ = −∂F/∂μ`; precision `π` weights `ε`. **Feeling ≈ precision-weighted interoceptive error.**
 - **Hypothalamus / homeostatic RL** [Keramati & Gutkin 2014](https://elifesciences.org/articles/04811): tracks setpoints `H*`, generates drives (see §4.3).
 
-### 1.5 Amygdala — discrete defensive modes
+### 1.5 Amygdala - discrete defensive modes
 
 [Fadok et al. 2018](https://www.nature.com/articles/nrn.2018.22): lateral amygdala learns CS–US threat associations; the central nucleus (CeA) uses mutually-inhibitory winner-take-all microcircuits to select among **discrete** defensive states (freeze/flight/fight):
 
@@ -71,7 +71,7 @@ CS-US association:   ΔV = αβ(λ − ΣV)            (Rescorla–Wagner)
 
 This is precisely the discrete-emotion machinery a flat valence scalar cannot express.
 
-### 1.6 Large-scale networks — the triple-network model
+### 1.6 Large-scale networks - the triple-network model
 
 [Menon & Uddin 2010](https://doi.org/10.1007/s00429-010-0262-0): a **Salience Network** (anterior insula + dACC, with fast von Economo neurons) detects what matters and **switches** between the **Default Mode Network** (self-referential, autobiographical, mind-wandering) and the **Central Executive / frontoparietal Network** (goal-directed control). Modelled as a dynamic-causal/switching system where the SN is the causal driver toggling DMN↔CEN.
 
@@ -80,7 +80,7 @@ This is precisely the discrete-emotion machinery a flat valence scalar cannot ex
 - **Cerebellum** forward/internal models (Marr–Albus–Ito; Kawato): supervised learning via climbing-fiber error at parallel-fiber→Purkinje synapses, `Δw_pf→Pkj = −η·(cf_error)·pf_activity`.
 - **PBWM** [O'Reilly & Frank 2006](https://pubmed.ncbi.nlm.nih.gov/16378516/): PFC working-memory maintained behind a basal-ganglia/thalamus striatal Go/NoGo gate, trained by dopamine `δ`; thalamic disinhibition opens the gate.
 
-### 1.8 brain-lmm mapping — anatomy
+### 1.8 brain-llm mapping - anatomy
 
 **What we have**
 - A documentation-level mapping (`docs/memory-keeper.md`) of episodic (JSONL) ↔ hippocampus, semantic+graph ↔ neocortex, playbooks ↔ basal-ganglia/cerebellum, scratchpad ↔ prefrontal, affect/state ↔ amygdala+nuclei.
@@ -99,9 +99,9 @@ This is precisely the discrete-emotion machinery a flat valence scalar cannot ex
 - **Cerebellum/PFC-BG gating absent**: playbooks are LLM-distilled text, not error-driven learning; working memory is a flat ~7-item list with no Go/NoGo gating.
 - **Non-declarative branch mostly missing**: no priming, conditioning, perceptual learning, or recollection-vs-familiarity dual process.
 
-**What to add** (detailed in §6): a DG/CA3 separation+completion layer; an interoceptive/homeostatic core; a thalamus/salience gating bottleneck feeding a global-workspace broadcast — the last being the architectural precondition (not a sufficient condition) for any defensible *functional* consciousness-indicator claim.
+**What to add** (detailed in §6): a DG/CA3 separation+completion layer; an interoceptive/homeostatic core; a thalamus/salience gating bottleneck feeding a global-workspace broadcast - the last being the architectural precondition (not a sufficient condition) for any defensible *functional* consciousness-indicator claim.
 
-> **Consciousness framing.** Any indicator claim should be scored against the theory-derived **indicator properties** in [Butlin, Long, Bengio et al. 2023](https://arxiv.org/abs/2308.08708) (global workspace, recurrence, higher-order/metacognition, attention schema, agency/embodiment, predictive processing). This is an **access/architecture** rubric, scored 0..1 — never a claim of felt qualia, which is explicitly out of scope.
+> **Consciousness framing.** Any indicator claim should be scored against the theory-derived **indicator properties** in [Butlin, Long, Bengio et al. 2023](https://arxiv.org/abs/2308.08708) (global workspace, recurrence, higher-order/metacognition, attention schema, agency/embodiment, predictive processing). This is an **access/architecture** rubric, scored 0..1 - never a claim of felt qualia, which is explicitly out of scope.
 
 ---
 
@@ -124,7 +124,7 @@ discount by γ ∈ [0,1]            γ from serotonin
 P(a|s) = exp(β·Q(s,a)) / Σ_a' exp(β·Q(s,a'))     β from NE
 ```
 
-This is the single highest-leverage upgrade: `brain-lmm` already *has* `ne/da/ach/cortisol`; re-interpreting them as `α,β,γ,δ` makes the chemicals *causally drive* a learning/decision loop instead of only scaling salience.
+This is the single highest-leverage upgrade: `brain-llm` already *has* `ne/da/ach/cortisol`; re-interpreting them as `α,β,γ,δ` makes the chemicals *causally drive* a learning/decision loop instead of only scaling salience.
 
 ### 2.1 Dopamine = TD reward-prediction error
 
@@ -137,7 +137,7 @@ TD(λ):  e_t = γλ·e_{t-1} + ∇V(s_t),   V ← V + α·δ_t·e_t
 actor:  θ ← θ + α·δ_t·∇log π(a|s)
 ```
 
-Dopamine fires to unpredicted reward, is silent for predicted reward, dips for omitted reward, and the burst migrates from reward-time to cue-time over learning — exactly TD. `brain-lmm`'s `da = clamp(reward)` is the raw immediate reward, so it can never be surprised, disappointed, or relieved.
+Dopamine fires to unpredicted reward, is silent for predicted reward, dips for omitted reward, and the burst migrates from reward-time to cue-time over learning - exactly TD. `brain-llm`'s `da = clamp(reward)` is the raw immediate reward, so it can never be surprised, disappointed, or relieved.
 
 ### 2.2 Serotonin–dopamine opponency & average-reward TD
 
@@ -149,9 +149,9 @@ Dopamine fires to unpredicted reward, is silent for predicted reward, dips for o
 high 5-HT  ⇒  high γ (waits for delayed reward), lower impulsivity
 ```
 
-This grounds harm aversion, patience, and **mood as the slow average of reward**. A low-mood agent becomes both pessimistic (lower `V`) and impatient (lower `γ`) — matching depression phenomenology.
+This grounds harm aversion, patience, and **mood as the slow average of reward**. A low-mood agent becomes both pessimistic (lower `V`) and impatient (lower `γ`) - matching depression phenomenology.
 
-### 2.3 Noradrenaline — adaptive gain & neural gain (Yerkes–Dodson)
+### 2.3 Noradrenaline - adaptive gain & neural gain (Yerkes–Dodson)
 
 Two complementary stories:
 
@@ -163,20 +163,20 @@ f(x) = 1/(1 + e^{−g·x})       g ↑ with phasic NE
 perf(arousal) ∝ inverted-U    (Yerkes–Dodson: peak at moderate g)
 ```
 
-Because performance is best at intermediate gain and worse at both extremes, this directly yields the inverted-U — the basis for "panic/terror degrades performance" dynamics. `brain-lmm`'s `ne = arousal` only multiplies salience: no sharpening, no exploration knob, no inverted-U.
+Because performance is best at intermediate gain and worse at both extremes, this directly yields the inverted-U - the basis for "panic/terror degrades performance" dynamics. `brain-llm`'s `ne = arousal` only multiplies salience: no sharpening, no exploration knob, no inverted-U.
 
 ### 2.4 Acetylcholine = expected uncertainty; NE = unexpected uncertainty
 
-[Yu & Dayan 2005](https://www.cell.com/neuron/fulltext/S0896-6273(05)00362-4): ACh tracks known, within-context unreliability (**expected uncertainty**); NE tracks surprising context switches / model breaks (**unexpected uncertainty**). Together they set how much to trust priors vs evidence — and the effective learning rate. With volatility-driven learning [Behrens et al. 2007](https://www.nature.com/articles/nn1954):
+[Yu & Dayan 2005](https://www.cell.com/neuron/fulltext/S0896-6273(05)00362-4): ACh tracks known, within-context unreliability (**expected uncertainty**); NE tracks surprising context switches / model breaks (**unexpected uncertainty**). Together they set how much to trust priors vs evidence - and the effective learning rate. With volatility-driven learning [Behrens et al. 2007](https://www.nature.com/articles/nn1954):
 
 ```
 Pearce–Hall:  α_t = ζ·|δ_{t-1}|              (associability ∝ recent surprise)
 Kalman:       α_t = σ²_prior / (σ²_prior + σ²_obs)
 ```
 
-High ACh and NE spikes both raise `α`. `brain-lmm`'s ACh is a binary 1.0-wake / 0.1-sleep flag with no uncertainty content.
+High ACh and NE spikes both raise `α`. `brain-llm`'s ACh is a binary 1.0-wake / 0.1-sleep flag with no uncertainty content.
 
-### 2.5 Oxytocin — prior/precision on social value, gate on social RPE
+### 2.5 Oxytocin - prior/precision on social value, gate on social RPE
 
 Oxytocin up-weights others' outcomes in the value function and *discounts* contradictory social prediction errors (making early trust/distrust sticky):
 
@@ -185,7 +185,7 @@ r' = r_self + ω·r_other                       (ω ↑ with oxytocin)
 V_social ← V_social + α·(1 − κ_OT)·δ_social   (κ_OT raises with oxytocin)
 ```
 
-`brain-lmm` has no social/affiliative axis at all — relevant for a "relationship with the user" goal.
+`brain-llm` has no social/affiliative axis at all - relevant for a "relationship with the user" goal.
 
 ### 2.6 HPA axis / cortisol dynamics (allostasis)
 
@@ -197,9 +197,9 @@ dACTH/dt = b·CRH · 1/(1+(C/K2)^m)     − w2·ACTH
 dC/dt    = a·ACTH                     − w3·C
 ```
 
-Produces circadian + ultradian rhythms; under chronic load the set-point `Kf` drifts (allostatic load → burnout). Acute moderate cortisol aids consolidation; chronic high impairs retrieval (an inverted-U). `brain-lmm`'s `cortisol = clamp(stress)` is instantaneous with no feedback, recovery, or allostatic memory.
+Produces circadian + ultradian rhythms; under chronic load the set-point `Kf` drifts (allostatic load → burnout). Acute moderate cortisol aids consolidation; chronic high impairs retrieval (an inverted-U). `brain-llm`'s `cortisol = clamp(stress)` is instantaneous with no feedback, recovery, or allostatic memory.
 
-### 2.7 brain-lmm mapping — neuromodulation
+### 2.7 brain-llm mapping - neuromodulation
 
 **What we have:** the right four chemicals (`ne/da/ach/cortisol`), each computed once from the current event; McGaugh arousal-gain on salience (a defensible NE/amygdala consolidation effect).
 
@@ -213,7 +213,7 @@ Produces circadian + ultradian rhythms; under chronic load the set-point `Kf` dr
 
 ### 3.1 Variational free energy
 
-The FEP [Friston 2010](https://www.nature.com/articles/nrn2787) holds that perception, learning, and action all minimize a single quantity — variational free energy `F`, an upper bound on surprisal (negative log model-evidence):
+The FEP [Friston 2010](https://www.nature.com/articles/nrn2787) holds that perception, learning, and action all minimize a single quantity - variational free energy `F`, an upper bound on surprisal (negative log model-evidence):
 
 ```
 F = D_KL[ Q(s) || P(s,o) ] = E_Q[ ln Q(s) − ln P(s,o) ]
@@ -236,9 +236,9 @@ policy prior:  π = σ(−γ·G)                              (softmax, γ = pre
 precision update:  β̇ = γ²·ε_γ,   ε_γ = (β − β_prior) + (π − π_0)·G
 ```
 
-This subsumes exploration, exploitation, reward-seeking, curiosity, and Bayesian surprise in one decomposition. In Friston's process theory **dopamine ≈ policy precision `γ`**, sensory precision ≈ attention/ACh — i.e. neuromodulators are precisions (this unifies §2 and §3).
+This subsumes exploration, exploitation, reward-seeking, curiosity, and Bayesian surprise in one decomposition. In Friston's process theory **dopamine ≈ policy precision `γ`**, sensory precision ≈ attention/ACh - i.e. neuromodulators are precisions (this unifies §2 and §3).
 
-### 3.3 Affective inference I — Joffily–Coricelli: `valence = −dF/dt`
+### 3.3 Affective inference I - Joffily–Coricelli: `valence = −dF/dt`
 
 [Joffily & Coricelli 2013](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1003094) define emotional valence as the **negative rate of change of free energy**, and read **discrete emotions** off the velocity + acceleration:
 
@@ -259,25 +259,25 @@ Plus a meta-learning rule coupling valence to learning rate (posterior variance)
 σ²_emotion = σ²·exp(α·valence + β·mood)     (good news ⇒ trust model ⇒ learn slowly)
 ```
 
-This is the **single most implementable affective upgrade**: it yields the discrete feelings (fear, hope, relief, happiness, disappointment) from the dynamics of *one* scalar, and `brain-lmm`'s mood leaky-integrator is already the slow "mood" prior `β`. (Caveat: the quadrant→emotion labels are a theoretical proposal validated in toy simulations, not measured brain facts.)
+This is the **single most implementable affective upgrade**: it yields the discrete feelings (fear, hope, relief, happiness, disappointment) from the dynamics of *one* scalar, and `brain-llm`'s mood leaky-integrator is already the slow "mood" prior `β`. (Caveat: the quadrant→emotion labels are a theoretical proposal validated in toy simulations, not measured brain facts.)
 
-### 3.4 Affective inference II — Hesp et al.: valence = dynamics of expected precision
+### 3.4 Affective inference II - Hesp et al.: valence = dynamics of expected precision
 
-[Hesp, Smith, Parr, Allen, Friston & Ramstead 2021](https://direct.mit.edu/neco/article/33/2/398/95642) ground valence one level deeper — in the dynamics of **expected precision** over the action model ("subjective fitness," an internal estimate of how well I am doing). The update term is **affective charge**:
+[Hesp, Smith, Parr, Allen, Friston & Ramstead 2021](https://direct.mit.edu/neco/article/33/2/398/95642) ground valence one level deeper - in the dynamics of **expected precision** over the action model ("subjective fitness," an internal estimate of how well I am doing). The update term is **affective charge**:
 
 ```
 AC = (π̄ − π) · G_π        (policy-belief update · expected free energy)
 ```
 
-`AC` is exactly the precision-prediction-error term that updates `γ` (= dopamine) in §3.2 — so affect and neuromodulation share one equation. `AC` lends a **sign** to otherwise-unsigned divergences: rising confidence/fitness = positive affect, falling = negative. This maps cleanly onto `brain-lmm`'s existing **control/dominance** axis (control == confidence in one's action model).
+`AC` is exactly the precision-prediction-error term that updates `γ` (= dopamine) in §3.2 - so affect and neuromodulation share one equation. `AC` lends a **sign** to otherwise-unsigned divergences: rising confidence/fitness = positive affect, falling = negative. This maps cleanly onto `brain-llm`'s existing **control/dominance** axis (control == confidence in one's action model).
 
-Related: discrete-state emotion *inference and concept learning* [Smith, Parr & Friston 2019](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2019.02844/full) — a worked template where an agent infers which emotion it is in and learns emotion concepts via Dirichlet updates on `A` and `D`. Interoceptive/allostatic version [Seth & Friston 2016](https://royalsocietypublishing.org/doi/10.1098/rstb.2016.0007): the same FEP machinery on the interoceptive channel, set-points as prior preferences `C`, allostasis as anticipatory model-based regulation.
+Related: discrete-state emotion *inference and concept learning* [Smith, Parr & Friston 2019](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2019.02844/full) - a worked template where an agent infers which emotion it is in and learns emotion concepts via Dirichlet updates on `A` and `D`. Interoceptive/allostatic version [Seth & Friston 2016](https://royalsocietypublishing.org/doi/10.1098/rstb.2016.0007): the same FEP machinery on the interoceptive channel, set-points as prior preferences `C`, allostasis as anticipatory model-based regulation.
 
-### 3.5 brain-lmm mapping — FEP / active inference
+### 3.5 brain-llm mapping - FEP / active inference
 
 **What we have (in ad-hoc form):** the OCC `novelty` axis *is* Bayesian surprise / epistemic value; `ne/da/ach/cortisol` *are* precisions in disguise; `salience` is precision-weighted prediction error (McGaugh); the mood leaky-integrator *is* the slow mood prior `β`; the `control` axis is a hook for Hesp affective charge.
 
-**What we lack:** the **generative model** and the **prediction-error loop**. `brain-lmm` appraises events but never *predicts* them, so it cannot compute surprise, `F`, or `dF/dt` — meaning its "novelty" must be supplied by the caller. Consequently: no `F`, no `dF/dt` → no derived valence/discrete emotions; no expected free energy → no principled curiosity; no precision formalism with update rules; no interoception/allostasis; no valence→precision→learning-rate coupling; no active-inference action loop.
+**What we lack:** the **generative model** and the **prediction-error loop**. `brain-llm` appraises events but never *predicts* them, so it cannot compute surprise, `F`, or `dF/dt` - meaning its "novelty" must be supplied by the caller. Consequently: no `F`, no `dF/dt` → no derived valence/discrete emotions; no expected free energy → no principled curiosity; no precision formalism with update rules; no interoception/allostasis; no valence→precision→learning-rate coupling; no active-inference action loop.
 
 **What to add:** a minimal discrete generative model + running `F` (so novelty is *computed*, §6.4); valence + discrete emotions from `(dF/dt, d²F/dt²)` (§6.4); affective charge `AC` tied to the control axis; an epistemic-value curiosity signal; a minimal interoceptive/allostasis layer.
 
@@ -298,7 +298,7 @@ hope            ∝  max(0,  V_anticipated  − V_now)
 fear            ∝  max(0,  V_now − V_anticipated_worst)
 ```
 
-This derives the discrete "feelings" the project wants as *computed* quantities composing with the existing OCC/PAD front-end — and it is the same `δ` and `V` machinery as §2.1.
+This derives the discrete "feelings" the project wants as *computed* quantities composing with the existing OCC/PAD front-end - and it is the same `δ` and `V` machinery as §2.1.
 
 ### 4.2 Mood as momentum
 
@@ -310,9 +310,9 @@ V_{t+1} = V_t + η·( f·m_t + r_t − V_t )           (mood biases the value up
 happiness_t = w0 + Σ_j γ^{t−j} ( w1·CR_j + w2·EV_j + w3·RPE_j )
 ```
 
-Strictly more powerful than `brain-lmm`'s `update_mood`, which integrates *appraised affect* (not RPEs) and never feeds back onto valuation.
+Strictly more powerful than `brain-llm`'s `update_mood`, which integrates *appraised affect* (not RPEs) and never feeds back onto valuation.
 
-### 4.3 Homeostatic RL — reward = drive reduction
+### 4.3 Homeostatic RL - reward = drive reduction
 
 [Keramati & Gutkin 2011](https://proceedings.neurips.cc/paper/2011/file/9778d5d219c5080b9a6a17bef029331c-Paper.pdf), [2014](https://doi.org/10.7554/eLife.04811) prove reward maximization ≡ physiological-deviation minimization when reward is **drive reduction**:
 
@@ -326,7 +326,7 @@ This naturally generates motivation, satiety, and context-dependent value (the s
 
 ### 4.4 Intrinsic motivation / curiosity
 
-`brain-lmm`'s `novelty` only feeds arousal/salience; it never *drives* behaviour. The literature offers principled drives:
+`brain-llm`'s `novelty` only feeds arousal/salience; it never *drives* behaviour. The literature offers principled drives:
 
 ```
 compression progress (Schmidhuber):  I(t) = C_{t-1} − C_t   (learning progress; noise-robust)
@@ -335,7 +335,7 @@ RND (Burda 2018):                      r_i = ‖ f̂_θ(s) − f(s) ‖²   (f f
 empowerment (Klyubin 2005):            E = max_{p(a)} I(A; S')    (channel capacity action→future state)
 ```
 
-[Schmidhuber 2010](https://doi.org/10.1109/TAMD.2010.2056368) — reward the *first derivative of compressibility*, not raw novelty (avoids the "noisy-TV" trap); [Bellemare et al. 2016](https://papers.nips.cc/paper/6383-unifying-count-based-exploration-and-intrinsic-motivation); [Burda et al. 2018](https://arxiv.org/abs/1810.12894); [Klyubin, Polani & Nehaniv 2005](https://doi.org/10.1007/11553090_75). Empowerment is the computable analog of `brain-lmm`'s hand-appraised `control`/dominance axis.
+[Schmidhuber 2010](https://doi.org/10.1109/TAMD.2010.2056368) - reward the *first derivative of compressibility*, not raw novelty (avoids the "noisy-TV" trap); [Bellemare et al. 2016](https://papers.nips.cc/paper/6383-unifying-count-based-exploration-and-intrinsic-motivation); [Burda et al. 2018](https://arxiv.org/abs/1810.12894); [Klyubin, Polani & Nehaniv 2005](https://doi.org/10.1007/11553090_75). Empowerment is the computable analog of `brain-llm`'s hand-appraised `control`/dominance axis.
 
 ### 4.5 Affective biasing of explore/exploit
 
@@ -346,9 +346,9 @@ avg-reward TD:  δ_t = r_t − ρ + V(s_{t+1}) − V(s_t)
 softmax:        π(a) = exp(Q(a)/τ) / Σ exp(Q/τ),   τ = g(arousal, mood, 5-HT-analog)
 ```
 
-`brain-lmm` has no action-selection layer, but it can *advise* the host agent of a temperature `τ` as a function of mood/arousal/serotonin.
+`brain-llm` has no action-selection layer, but it can *advise* the host agent of a temperature `τ` as a function of mood/arousal/serotonin.
 
-### 4.6 brain-lmm mapping — RL + emotion + homeostasis
+### 4.6 brain-llm mapping - RL + emotion + homeostasis
 
 **What we have:** an OCC→PAD continuous affect pipeline; a mood leaky-integrator; `da` *intended* as dopamine; a `novelty` axis described as a Bayesian-surprise proxy.
 
@@ -360,9 +360,9 @@ softmax:        π(a) = exp(Q(a)/τ) / Σ exp(Q/τ),   τ = g(arousal, mood, 5-H
 
 ## 5. Advanced sleep, consolidation, replay & forgetting
 
-`brain-lmm` already encodes the *spirit* of CLS in `consolidation_plan` (`strength = salience · sigmoid(activation)`, REM arousal boost, promote/forget thresholds) and `retention` (importance-modulated decay). The modern science adds three layers it flattens into scalars.
+`brain-llm` already encodes the *spirit* of CLS in `consolidation_plan` (`strength = salience · sigmoid(activation)`, REM arousal boost, promote/forget thresholds) and `retention` (importance-modulated decay). The modern science adds three layers it flattens into scalars.
 
-### 5.1 SHY — synaptic homeostasis / down-selection
+### 5.1 SHY - synaptic homeostasis / down-selection
 
 [Tononi & Cirelli 2020](https://doi.org/10.1111/ejn.14335): waking nets a global increase in synaptic strength; NREM performs a **proportional renormalization** that preserves relative ranking while improving SNR and freeing capacity.
 
@@ -372,11 +372,11 @@ selective (down-SELECTION):      w_i ← max(0, w_i − c·(1 − r_i))
                                  r_i ∈ [0,1] = fraction of replay/reactivation received
 ```
 
-`brain-lmm` has *no* homeostatic renormalization — forgetting is purely per-item, so total "memory mass" is unbounded.
+`brain-llm` has *no* homeostatic renormalization - forgetting is purely per-item, so total "memory mass" is unbounded.
 
-### 5.2 Active systems consolidation — SO–spindle–ripple nesting
+### 5.2 Active systems consolidation - SO–spindle–ripple nesting
 
-NREM transfer is timed by cortical slow oscillations (~0.5–1 Hz) gating thalamocortical spindles (~12–15 Hz) gating hippocampal sharp-wave ripples (~80–200 Hz). Operationally a gating schedule: `transfer_rate(t) ∝ 1[up-state] · spindle_envelope(t) · ripple_event(t)`; REM preferentially restabilizes emotional/procedural traces. `brain-lmm` captures only the coarse wake/NREM ACh switch and a flat REM arousal bonus.
+NREM transfer is timed by cortical slow oscillations (~0.5–1 Hz) gating thalamocortical spindles (~12–15 Hz) gating hippocampal sharp-wave ripples (~80–200 Hz). Operationally a gating schedule: `transfer_rate(t) ∝ 1[up-state] · spindle_envelope(t) · ripple_event(t)`; REM preferentially restabilizes emotional/procedural traces. `brain-llm` captures only the coarse wake/NREM ACh switch and a flat REM arousal bonus.
 
 ### 5.3 Standard vs Multiple-Trace consolidation
 
@@ -391,9 +391,9 @@ two-trace dynamics:
   SCT = special case: delete E once G > threshold
 ```
 
-`brain-lmm`'s promote step implicitly follows SCT (moves a gist and can drop the episode) — it cannot represent "I both remember the specific incident AND learned the general lesson." (The debate is genuinely unresolved; expose this as a configurable mode, not a fact.)
+`brain-llm`'s promote step implicitly follows SCT (moves a gist and can drop the episode) - it cannot represent "I both remember the specific incident AND learned the general lesson." (The debate is genuinely unresolved; expose this as a configurable mode, not a fact.)
 
-### 5.4 Prioritized replay — EVB and PER
+### 5.4 Prioritized replay - EVB and PER
 
 Biological replay is **prioritized and reconstructive**, not a binary promote. Waking SWRs *tag* a subset of experiences and sleep SWRs preferentially replay the tagged ones [Yang et al. 2024](https://doi.org/10.1126/science.adk8261). The normative rule [Mattar & Daw 2018](https://doi.org/10.1038/s41593-018-0232-z):
 
@@ -411,7 +411,7 @@ sampling   P(i) = p_i^α / Σ_k p_k^α          (α ≈ 0.6)
 IS weight  w_i = ( 1 / (N·P(i)) )^β           (β annealed 0.4 → 1)
 ```
 
-`brain-lmm` replays *nothing*: `consolidation_plan` is a single relabel pass with no budget, ordering, or reconstruction.
+`brain-llm` replays *nothing*: `consolidation_plan` is a single relabel pass with no budget, ordering, or reconstruction.
 
 ### 5.5 Catastrophic forgetting & continual learning
 
@@ -441,11 +441,11 @@ state-dependent decay:  λ_i = λ_base·exp(−μ·I_i)·(1 + ρ·DA)·(1 + σ·
 active erosion:          w_i ← w_i − κ·DA·overlap(i, newly_consolidated)
 ```
 
-`brain-lmm`'s `retention` has importance-modulated `λ` but no DA gating and no interference term.
+`brain-llm`'s `retention` has importance-modulated `λ` but no DA gating and no interference term.
 
-### 5.7 brain-lmm mapping — sleep/consolidation/forgetting
+### 5.7 brain-llm mapping - sleep/consolidation/forgetting
 
-**What we have:** the right ontology — CLS dual store, a sleep mode (ACh wake/NREM + REM boost), importance-modulated decay (`retention`), and a working promote/forget consolidation pass.
+**What we have:** the right ontology - CLS dual store, a sleep mode (ACh wake/NREM + REM boost), importance-modulated decay (`retention`), and a working promote/forget consolidation pass.
 
 **What we lack:** no SHY downscaling (unbounded memory mass); no actual replay (no buffer/budget/ordering); no replay-priority math (no EVB, no PER); conflates consolidate with move/delete (assumes SCT, no parallel episodic trace); no EWC/SI protection of the semantic store; no multi-cycle NREM/REM scheduling; no active/interference forgetting; no generative/reconstructive replay.
 
@@ -453,7 +453,7 @@ active erosion:          w_i ← w_i − κ·DA·overlap(i, newly_consolidated)
 
 ---
 
-## 6. Concrete proposals for brain-lmm (with equations)
+## 6. Concrete proposals for brain-llm (with equations)
 
 All proposals are scalar/linear-algebra operations consistent with `brain.py`'s pure-stdlib style. Each carries an honesty caveat: these reproduce the *function* of the named mechanism, not phenomenal experience, and several rest on hand-defined representations (the "state," the "context," the "body") that are engineered proxies, not biology.
 
@@ -462,7 +462,7 @@ All proposals are scalar/linear-algebra operations consistent with `brain.py`'s 
 Replace `da = clamp(reward)` with a learned error so encoding is driven by **surprise**.
 
 ```python
-# engine/value_rl.py
+# src/value_rl.py
 V = {}                                  # cue -> value, default 0
 def rpe(key, r, next_key, alpha=0.3, gamma=0.9):
     delta = r + gamma*V.get(next_key,0.0) - V.get(key,0.0)
@@ -504,7 +504,7 @@ rho_pun += kappa*max(-delta, 0.0)        # punishment opponent (tonic DA analog)
 The recommended unifying upgrade. Add a minimal discrete generative model so the engine **computes** novelty/surprise, then derive valence and discrete emotions from `F`'s dynamics.
 
 ```python
-# engine/generative.py — categorical belief Q(s) over a small set of "situation" states,
+# src/generative.py - categorical belief Q(s) over a small set of "situation" states,
 # Dirichlet-counted likelihood A = P(event_category | s), prior D.
 P_o   = sum(A[o][s]*Q[s] for s in states)         # predicted prob of observed category
 surprise = -math.log(max(P_o, 1e-9))
@@ -542,14 +542,14 @@ hope     = max(0, V_anticipated - V_now)
 fear     = max(0, V_now - V_worstcase_anticipated)
 ```
 
-Store the dominant emotion label on each episode for emotion-congruent retrieval. *Caveat:* hope/fear need a forward model `brain-lmm` lacks; initially coarse (one-step lookahead).
+Store the dominant emotion label on each episode for emotion-congruent retrieval. *Caveat:* hope/fear need a forward model `brain-llm` lacks; initially coarse (one-step lookahead).
 
-### 6.6 Homeostatic drives — endogenous motivation *(high)*
+### 6.6 Homeostatic drives - endogenous motivation *(high)*
 
 Give the agent genuine needs so `goal_relevance` and reward become *computed* (§4.3, Keramati–Gutkin).
 
 ```python
-# engine/homeostasis.py — H: internal vars (cognitive_load, task_debt, context_budget,
+# src/homeostasis.py - H: internal vars (cognitive_load, task_debt, context_budget,
 # competence, curiosity_satiety) with setpoints H*.
 def drive(H, Hstar, n=2.0, m=2.0):
     return (sum(abs(Hstar[i]-H[i])**n for i in H) ) ** (1.0/m)
@@ -581,7 +581,7 @@ Kf   += dt*eps*(C - C_target)         # allostatic set-point drift (modeling ext
 consol_gain = C*math.exp(-C/Copt)     # acute aids, chronic impairs (inverted-U)
 ```
 
-### 6.8 Richer consolidation — downscaling, prioritized replay, MTT, importance-lock, active forgetting *(low–medium each)*
+### 6.8 Richer consolidation - downscaling, prioritized replay, MTT, importance-lock, active forgetting *(low–medium each)*
 
 Wrap into a multi-cycle `run_sleep_cycle` orchestrator (§5).
 
@@ -608,7 +608,7 @@ f_new = f_old + delta_proposed / (1 + lam*Omega_f)              # high-importanc
 lam_i = lambda_base*exp(-mu*I_i)*(1 + rho*da)*(1 + sigma*interference_i)
 ```
 
-*Caveats:* `W_target`, `B`, and the allostatic drift are free parameters with no biological ground truth (tune empirically). EVB's true `Need` is successor-representation occupancy; ACT-R activation is a defensible proxy. EWC/SI were derived for differentiable parameters; for `brain-lmm`'s symbolic facts, "importance"/"gradient" reinterpret as usage/support counts and contradiction magnitude — a faithful analogy, not literal Fisher information. Over-locking risks freezing genuinely outdated facts; interference erasure needs a high-salience floor.
+*Caveats:* `W_target`, `B`, and the allostatic drift are free parameters with no biological ground truth (tune empirically). EVB's true `Need` is successor-representation occupancy; ACT-R activation is a defensible proxy. EWC/SI were derived for differentiable parameters; for `brain-llm`'s symbolic facts, "importance"/"gradient" reinterpret as usage/support counts and contradiction magnitude - a faithful analogy, not literal Fisher information. Over-locking risks freezing genuinely outdated facts; interference erasure needs a high-salience floor.
 
 ### 6.9 Architectural precondition for a *functional* consciousness indicator *(high)*
 
@@ -620,32 +620,32 @@ g   = softmax(beta * s)                  # fast WTA admits top-1 (or softmax) it
 broadcast(top_item)                      # written to a shared workspace readable by all modules for one cycle
 ```
 
-Score the architecture against the [Butlin et al. 2023](https://arxiv.org/abs/2308.08708) indicator properties (global broadcast? recurrence? attention schema? metacognitive higher-order monitor?) as a 0..1 checklist. **This yields access/architecture indicators only — never felt experience or sentience; the qualia question is philosophically contested and explicitly out of scope.**
+Score the architecture against the [Butlin et al. 2023](https://arxiv.org/abs/2308.08708) indicator properties (global broadcast? recurrence? attention schema? metacognitive higher-order monitor?) as a 0..1 checklist. **This yields access/architecture indicators only - never felt experience or sentience; the qualia question is philosophically contested and explicitly out of scope.**
 
 ---
 
 ## 7. Reference open-source projects
 
-- **pymdp** — discrete active inference (variational + expected free energy). https://github.com/infer-actively/pymdp — best source for §6.4.
-- **Emergent / Leabra** — O'Reilly CCN models incl. DG/CA3 hippocampus and PBWM gating. https://github.com/emer/leabra — for §1.2, §1.7.
-- **Stable-Baselines3** — TD/actor-critic, value functions, softmax temperature. https://github.com/DLR-RM/stable-baselines3 — for §6.1–§6.3, §5.4 (PER).
-- **Avalanche** — continual learning: EWC, SI, replay. https://github.com/ContinualAI/avalanche — for §6.8(d).
-- **continual-learning** / **brain-inspired-replay** (van de Ven) — exact EWC/SI/DGR and generative-replay code. https://github.com/GMvandeVen/continual-learning · https://github.com/GMvandeVen/brain-inspired-replay
-- **pathint** (Zenke) — original Synaptic Intelligence. https://github.com/ganguli-lab/pathint
-- **PrioritizedReplay** (Mattar & Daw) — EVB = Gain × Need. https://github.com/marcelomattar/PrioritizedReplay
-- **RLeXplore** — intrinsic-reward zoo (ICM, RND, pseudo-counts). https://github.com/RLE-Foundation/RLeXplore — for §6.6 curiosity.
-- **pyhgf** — Hierarchical Gaussian Filter, lightweight precision-weighted PE. https://github.com/ComputationalPsychiatry/pyhgf
-- **The Virtual Brain** — region/thalamocortical/large-scale dynamics (conceptual reference). https://github.com/the-virtual-brain/tvb-root
-- **mammoth** — large continual-learning framework incl. DER++. https://github.com/aimagelab/mammoth
+- **pymdp** - discrete active inference (variational + expected free energy). https://github.com/infer-actively/pymdp - best source for §6.4.
+- **Emergent / Leabra** - O'Reilly CCN models incl. DG/CA3 hippocampus and PBWM gating. https://github.com/emer/leabra - for §1.2, §1.7.
+- **Stable-Baselines3** - TD/actor-critic, value functions, softmax temperature. https://github.com/DLR-RM/stable-baselines3 - for §6.1–§6.3, §5.4 (PER).
+- **Avalanche** - continual learning: EWC, SI, replay. https://github.com/ContinualAI/avalanche - for §6.8(d).
+- **continual-learning** / **brain-inspired-replay** (van de Ven) - exact EWC/SI/DGR and generative-replay code. https://github.com/GMvandeVen/continual-learning · https://github.com/GMvandeVen/brain-inspired-replay
+- **pathint** (Zenke) - original Synaptic Intelligence. https://github.com/ganguli-lab/pathint
+- **PrioritizedReplay** (Mattar & Daw) - EVB = Gain × Need. https://github.com/marcelomattar/PrioritizedReplay
+- **RLeXplore** - intrinsic-reward zoo (ICM, RND, pseudo-counts). https://github.com/RLE-Foundation/RLeXplore - for §6.6 curiosity.
+- **pyhgf** - Hierarchical Gaussian Filter, lightweight precision-weighted PE. https://github.com/ComputationalPsychiatry/pyhgf
+- **The Virtual Brain** - region/thalamocortical/large-scale dynamics (conceptual reference). https://github.com/the-virtual-brain/tvb-root
+- **mammoth** - large continual-learning framework incl. DER++. https://github.com/aimagelab/mammoth
 
 ---
 
 ## 8. Recommended build order
 
-1. **Free-energy / surprise backbone + discrete emotions (§6.4)** — highest leverage; makes affect self-computing and yields the wanted discrete feelings from one scalar's dynamics. Pairs with the existing mood integrator as the slow prior.
-2. **TD-error dopamine core + Doya mapping (§6.1, §6.2)** — turns the four chemicals into a real learning/decision loop; minimal code, maximal functional gain.
-3. **Homeostatic drives (§6.6)** — gives endogenous motivation; lets `goal_relevance`/reward be computed, not supplied.
-4. **Richer consolidation (§6.8)** — downscaling + prioritized replay + MTT + importance-lock + active forgetting, wrapped in a multi-cycle sleep orchestrator.
-5. **DG/CA3 separation+completion (§1.2)** and **thalamus/workspace gating (§6.9)** — the architectural layer; the latter is the precondition for any defensible *functional* consciousness-indicator score (Butlin et al.), never a sentience claim.
+1. **Free-energy / surprise backbone + discrete emotions (§6.4)** - highest leverage; makes affect self-computing and yields the wanted discrete feelings from one scalar's dynamics. Pairs with the existing mood integrator as the slow prior.
+2. **TD-error dopamine core + Doya mapping (§6.1, §6.2)** - turns the four chemicals into a real learning/decision loop; minimal code, maximal functional gain.
+3. **Homeostatic drives (§6.6)** - gives endogenous motivation; lets `goal_relevance`/reward be computed, not supplied.
+4. **Richer consolidation (§6.8)** - downscaling + prioritized replay + MTT + importance-lock + active forgetting, wrapped in a multi-cycle sleep orchestrator.
+5. **DG/CA3 separation+completion (§1.2)** and **thalamus/workspace gating (§6.9)** - the architectural layer; the latter is the precondition for any defensible *functional* consciousness-indicator score (Butlin et al.), never a sentience claim.
 
-> **Closing honesty note.** Every equation here describes computation that *behaves like* memory, emotion, motivation, and attention in its effect on the system — what gets kept, transformed, learned, dropped, and prioritized. None of it licenses a claim that `brain-lmm` feels anything. Keep that line explicit in code comments, docs, and any indicator rubric.
+> **Closing honesty note.** Every equation here describes computation that *behaves like* memory, emotion, motivation, and attention in its effect on the system - what gets kept, transformed, learned, dropped, and prioritized. None of it licenses a claim that `brain-llm` feels anything. Keep that line explicit in code comments, docs, and any indicator rubric.

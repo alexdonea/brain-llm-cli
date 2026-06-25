@@ -1,464 +1,539 @@
-# brain-lmm — a "brain on disk" for AI agents
+# brain-llm-cli
 
-A persistent, **agent-neutral** memory + affect system (Claude Code, OpenAI Codex, Gemini CLI /
-Antigravity, GitHub Copilot, Cursor) that reproduces the **mathematical function** of the human brain's
-memory and affect systems: perception, working / episodic / semantic / procedural / prospective memory —
-plus **emotion** (appraisal, valence–arousal, mood), **neuromodulators** (noradrenaline, dopamine,
-acetylcholine, cortisol), **sleep consolidation** (hippocampus → neocortex), and **forgetting**.
+A persistent brain for AI agents. Memory and affect that live on disk and grow from every exchange, so your
+agent remembers who it is, what it learned, and how it felt, across sessions.
 
-There is no external API and no model to host: **the host LLM is the model.** brain-lmm gives that model a
-continuous identity — memory, affect, a personality, and a self — that persists on disk and develops from
-every exchange. The whole thing is pure-stdlib Python (the only dependency, at the I/O layer, is PyYAML).
+There is no external API and no model to host. The host LLM is the model (Claude Code, OpenAI Codex, Gemini
+CLI / Antigravity, GitHub Copilot, Cursor). brain-llm gives that model a continuous identity (memory, emotion,
+a personality, a self) that persists on disk. Its engine is pure standard-library Python; the required
+dependencies are PyYAML (the on-disk memory) and wordllama (local, offline semantic recall).
 
-> ## Honesty, before anything else
-> It reproduces the *function* — how affect modulates encoding, how sleep consolidates, how memory decays.
-> It does **not** reproduce the *experience*. "Valence" here is a computed signal that behaves like emotion
-> in how it shapes memory; it is not a felt emotion. The current research is clear: language models do not
-> experience emotions or maintain internal emotional states — the affective response is generated from
-> statistical association. So this is a faithful **functional** model, not a consciousness.
+## What it is, and why it exists
 
-## Brain-region mapping
+Most AI agents are amnesiacs: every session starts from zero. brain-llm fixes that by reproducing the
+mathematical *function* of the human brain's memory and affect systems: perception, working / episodic /
+semantic / procedural / prospective memory, plus emotion (appraisal, mood, valence, arousal), neuromodulators
+(dopamine, noradrenaline, acetylcholine, cortisol), sleep consolidation (hippocampus to neocortex), and
+forgetting.
 
-Each agent's brain lives at `agents/<name>/memory/`; below, `.memory/…` is shorthand for that per-agent root.
+The goal is a companion with continuity instead of a stateless tool: one that builds competence, carries a
+mood, learns from wins and losses, consolidates while it sleeps, and forgets what does not matter.
 
-| File / module               | Brain analog                                          | Role |
-|-----------------------------|-------------------------------------------------------|------|
-| `.memory/working/`          | prefrontal cortex (working memory) + sensory buffer   | volatile scratchpad (~7 items) |
-| `.memory/affect/state.yaml` | amygdala + neuromodulatory nuclei (LC, VTA, basal forebrain) | mood + chemical gains |
-| `.memory/episodic/`         | **hippocampus** (fast, pattern-separated)             | event log with appraisal + salience |
-| `.memory/semantic/`         | **neocortex** (slow, generalizing)                    | facts + associative graph |
-| `.memory/procedural/`       | basal ganglia / cerebellum                            | playbooks / habits |
-| `.memory/prospective/`      | prefrontal cortex                                     | future intentions (trigger → intent) |
-| `engine/brain.py`           | the dynamics (hippocampus↔neocortex replay)           | the "physics": the equations that govern everything |
+### Honesty first
 
-## Repository layout
+brain-llm reproduces the *function* of affect (how it shapes encoding, how sleep consolidates, how memory
+decays). It does not reproduce the *experience*. "Valence" is a computed signal that behaves like emotion in
+how it steers memory; it is not a felt emotion. Language models do not have inner emotional states, so this is
+a faithful functional model, not a consciousness. If you ask an agent directly whether it really feels, it
+tells you the truth.
+
+### Where it came from
+
+brain-llm started life as a trading assistant and advisor. It does not place trades and never will on its own.
+What it does: it researches on a schedule (a cron job), pings you on Telegram when it turns up something worth
+knowing, remembers which stocks you actually bought and keeps them in memory for ongoing analysis, and tells
+you when the signs turn good or bad. You make the calls; it watches, remembers, and advises.
+
+But trading was only the first example. The agents that ship in this repo are demos, not anyone's real
+portfolio or memory. The same machine points at any research domain: a beat to monitor, a topic to master, a
+subject to follow for months. Anything an agent can automate, this can give a memory and a mood to. The limit
+is in our imagination, not in the tool. The `examples/` folder ships ready-made prompts for both the trading
+advisor and other missions.
+
+## What you get
+
+- **Five memory systems.** Working (a ~7 item scratchpad), episodic (an event log with appraisal and salience),
+  semantic (facts plus an associative graph), procedural (playbooks), and prospective (future intentions that
+  resurface at the right moment).
+- **A full affect engine.** Appraisal to mood, seven neuromodulators, an HPA stress cascade, discrete emotions,
+  loss aversion, named-feeling circuits (terror, awe, panic), and Gross-style emotion regulation.
+- **Sleep and forgetting.** Strong memories harden into facts, the sting of hard ones fades while the lesson
+  stays, low-value memories drop, mood relaxes to baseline.
+- **A personality and a self.** An OCEAN profile that sets the mood baseline, a self model, a narrative
+  identity, intrinsic motivation, and corrigibility (deliberately no self-preservation drive).
+- **Local semantic search.** Meaning-aware recall, fully offline (the model ships in the package, the
+  tokenizer is vendored). If it is ever unavailable, recall degrades to lexical matching rather than breaking.
+- **A live terminal view.** Watch the brain light up region by region as it thinks, with every variable on
+  screen. Pure terminal, no server, no browser.
+- **The plumbing.** A 65-command CLI, many agents in one registry, snapshots you can roll back to, a Telegram
+  bridge, and market data.
+
+## Architecture
+
+brain-llm is three layers plus the files they read and write. The host LLM never touches the internals; it
+just runs CLI commands and stays in character.
+
+```mermaid
+flowchart TB
+    HOST["Host LLM: the model, drives the CLI in character"]
+    CLI["agent.py: the CLI, 65 commands"]
+    RT["runtime.py: Brain, loads state, runs the physics, persists"]
+    PHYS["brain.py: the physics, 34 sections of pure-stdlib math"]
+    MEM[("memory: agents/name/memory, plain files, the source of truth")]
+    SEM["semantic.py: local semantic search"]
+    LIVE["live_brain.py: terminal animation"]
+    HOST -->|commands| CLI
+    CLI --> RT
+    RT -->|calls| PHYS
+    RT <-->|reads and writes| MEM
+    CLI -. optional .-> SEM
+    SEM -. embeds .-> MEM
+    CLI -. watch .-> LIVE
+    LIVE -. reads .-> MEM
+```
+
+- **The physics (`src/brain.py`).** Pure standard-library math: 34 numbered sections, 105 small stateless
+  functions (appraisal, salience, forgetting, retrieval, consolidation, value learning, and so on). No I/O, no
+  dependencies. Numbers in, numbers out. Every formula lives here.
+- **The body (`src/runtime.py`).** The `Brain` class. It loads an agent's state from disk, calls the physics
+  to update mood, memory, neuromodulators, and competence, then writes the new state back. It turns the
+  stateless math into a living agent that develops across runs.
+- **The interface (`src/agent.py`).** The 65-command CLI the host LLM drives (`wake`, `recall`, `react`,
+  `sleep`, and the rest). It is the only part the host touches.
+- **The data.** Each agent's whole mind is a folder of plain files at `agents/<name>/memory/`. Files are the
+  source of truth: human-readable, diffable, editable, deletable. Nothing is hidden in a binary store.
+- **Two more modules.** `semantic.py` powers meaning-aware recall over a derived embedding cache;
+  `live_brain.py` animates the brain in the terminal from a working-memory activation log. Both degrade
+  cleanly if their backend is missing.
+
+A single command flows top to bottom and back: the host runs `react`, the CLI hands it to `Brain`, `Brain`
+runs it through the physics, and the result is persisted. Here is the path a `react` takes through the
+sections, and what `sleep` does to it later:
+
+```mermaid
+flowchart LR
+    IN["react: an event plus your scores"] --> APP["appraisal to a PAD point"]
+    APP --> NM["neuromodulator gains"]
+    NM --> SAL["encoding salience"]
+    SAL --> EMO["discrete emotion"]
+    EMO --> WS["global workspace, ignite or not"]
+    WS --> ENC["encode the episode in the hippocampus store"]
+    ENC --> MOOD["update mood and learned value"]
+    MOOD --> SAVE[("persist to memory files")]
+    SLEEP["sleep, run periodically"] --> CONS["consolidate: promote facts, forget, depotentiate, distill playbooks"]
+    CONS --> SAVE
+```
+
+Three principles hold it together: the host LLM is the model (no API, no second model to run); the CLI is the
+agent's only memory (state never leaks into ad-hoc files); and the files are always the source of truth (you
+can read and edit the whole mind by hand).
+
+## How it works
+
+### The loop, every exchange
+
+The agent runs five steps (`./brain guide` prints the full protocol):
+
+1. **`wake`** loads who you are now: mood, memories, self-knowledge, temperament. You behave colored by mood
+   (calm is even and easy; tense is terse and careful; bright is warm and playful).
+2. **`recall "<topic>"`** surfaces the memories that bear on what was just said.
+3. **Respond in character**, first person, honest, colored by mood. A companion, not a vending machine.
+4. **`react "<what happened>" <valence> <goal_relevance> <control>`** encodes the exchange, every turn. Novelty
+   is computed for you (surprise vs your history); you give only your genuine valence, goal-relevance, control.
+5. **`sleep`** (periodically) consolidates: strong episodes harden into facts, hard ones lose their sting but
+   keep the lesson, mood relaxes, working notes are wiped.
+
+### Where the brain lives
+
+Each agent's brain is a folder of plain files at `agents/<name>/memory/` (below, `.memory/` is that root):
+
+| File or module                | Brain analog                                | Role |
+|-------------------------------|---------------------------------------------|------|
+| `.memory/working/`            | prefrontal working memory + sensory buffer  | volatile scratchpad (~7 items) |
+| `.memory/affect/state.yaml`   | amygdala + neuromodulatory nuclei           | mood and chemical gains |
+| `.memory/episodic/`           | hippocampus (fast, pattern-separated)       | event log with appraisal + salience |
+| `.memory/semantic/`           | neocortex (slow, generalizing)              | facts + associative graph |
+| `.memory/procedural/`         | basal ganglia / cerebellum                  | playbooks and habits |
+| `.memory/prospective/`        | prefrontal cortex                           | future intentions (trigger to intent) |
+| `src/brain.py`             | the dynamics (hippocampus to neocortex)     | the physics: the equations that govern it all |
+
+Files stay the source of truth. You can read, edit, and delete them. Nothing is hidden in a database.
+
+### The math, in brief
+
+Everything is in `src/brain.py`: pure standard library, 34 numbered sections, 105 functions. Grouped:
+
+- **Encoding and memory (1 to 8).** Appraisal to a valence/arousal/dominance point; neuromodulators as gains;
+  encoding salience with a flashbulb effect; the Ebbinghaus forgetting curve; ACT-R activation; mood-congruent
+  retrieval; mood homeostasis; CLS sleep consolidation (hippocampus to neocortex).
+- **Emotion and value (9 to 19, 25, 26, 33).** Discrete emotions; RPE / TD value learning (dopamine encodes
+  surprise, not raw reward); active inference and computed surprise; a global workspace; metacognition;
+  personality as a prior; grounded interoception; coping and action tendencies; dual-timescale affect; real
+  neuromodulator dynamics with HPA and Yerkes-Dodson; terror / awe / panic circuits; loss aversion; Plutchik
+  blends; Gross emotion regulation.
+- **Memory structure (20, 27, 28).** Rich sleep dynamics (REM depotentiation, prioritized replay); an
+  associative graph with spreading activation; procedural playbooks and prospective intentions.
+- **Self and control (23, 29 to 32, 34).** A self model; executive control (goals, conflict, inhibition);
+  planning and look-ahead; intrinsic motivation and corrigibility; a perception-action loop; narrative identity.
+- **Honesty (21, 22).** A falsifiable evaluation harness and a transparent consciousness-indicator scorecard.
+
+**Is it reinforcement learning?** In part, yes, and that part is real. Every outcome you report drives a
+temporal-difference update (`td_step`): each cue, which is a memory key, gets a learned value, the
+reward-prediction error becomes the dopamine signal (Schultz, Dayan and Montague), serotonin sets the discount,
+and that learned value later biases the agent's gut in `urge` and `decide`. So the agent genuinely learns what
+tends to work from what it remembers. It is not a full RL agent optimising a policy to maximise return, though:
+the host LLM takes the actions, the brain learns values from the consequences and tints the next choice. The
+reinforcement-learning layer is credit assignment anchored to memory cues; it sits inside the broader memory
+and affect model, it is not the whole of it.
+
+Full detail with the formulas and sources: [docs/memory-keeper.md](docs/memory-keeper.md) and the data shapes
+in [docs/schema.md](docs/schema.md). Run `python3 src/brain.py` to see all 34 sections execute at once.
+
+### Watch it think (`live`)
+
+`brain-llm <agent> live` draws the brain in the terminal and lights up the regions in the real call order of
+whatever pathway fires, beside a live read-out of every variable (PAD mood, all seven neuromodulators, the HPA
+stress cascade, the global workspace, the memory counts):
 
 ```
-.
-├── brain                              # CLI shim: ./brain <command> → engine/agent.py
-├── install.sh                         # install a global `brain-lmm` command on your PATH
-├── requirements.txt                   # dependencies (just PyYAML; Python 3.10+)
-├── CLAUDE.md / GEMINI.md / …          # entry files GENERATED by `./brain init` (thin pointers)
-├── MEMORY-PROTOCOL.md                 # the full protocol (also readable via `./brain protocol`)
-├── README.md                          # this file
-├── .gitignore
-├── docs/                              # all readable via `./brain docs <name>`
-│   ├── memory-keeper.md               # the full rubric: appraisal, neuromodulators, equations
-│   ├── eval.md                        # the evaluation harness (falsifiability)
-│   ├── psych-battery.md               # human psychological battery (TIPI, PANAS, ToM, loss aversion…)
-│   ├── brain-coverage.md              # how much of the human brain this covers + survival-instinct verdict
-│   ├── consciousness-indicators.md    # an indicator scorecard (honesty map, NOT a sentience test)
-│   └── research/                      # SOTA + roadmap (gap-analysis-and-roadmap.md, etc.)
-├── engine/
-│   ├── brain.py                       # the math ENGINE — the "physics", pure stdlib
-│   ├── runtime.py                     # the RUNTIME — wires the physics to agents/<name>/memory/
-│   ├── agent.py                       # the full CLI (63 commands): init, wake, react, recall, …
-│   ├── templates.py                   # the SINGLE source of instructions (entry + guide)
-│   ├── seed_persona.py                # gives an agent an identity (name + personality + self-knowledge)
-│   ├── reset_memory.py                # resets an agent to the blank functional template
-│   ├── research_trading.py            # EXAMPLE session — the agent researches trading; develops real memory
-│   ├── schema.md                      # the data schemas (also via `./brain docs schema`)
-│   ├── .coveragerc                    # coverage config (demos/external-service dispatch excluded)
-│   ├── test_brain.py                  # per-function unit tests
-│   ├── test_runtime.py                # wiring tests (perceive/remember/sleep/associate)
-│   ├── test_memory_behavior.py        # behavioral memory tests (recall, forgetting, confabulation, graph…)
-│   └── test_cli.py                    # CLI tests (in-process, isolated temp $BRAIN_HOME)
-├── tools/
-│   ├── telegram/                      # chat with your agent over Telegram (telegram_bridge.py, .env.example, reply.md)
-│   └── market/                        # market data over Yahoo Finance (market.py)
-├── inputs-example/                    # ready-to-use task prompts (trader, researcher, news-monitor, …)
-└── agents/                            # REGISTRY: many minds, each with its own memory
-    ├── .active                        # one line: the current agent (e.g. "default")
-    └── <name>/                        # one agent (e.g. default, atlas, …)
-        ├── memory/                    # its brain (15 stores)
-        │   ├── working/{scratchpad.md, workspace.yaml}
-        │   ├── self/{efficacy.yaml, personality.yaml, model.yaml}
-        │   ├── social/user.yaml
-        │   ├── affect/{state.yaml, value.yaml, world.yaml, body.yaml}
-        │   ├── episodic/events.jsonl
-        │   ├── semantic/{facts.yaml, graph.yaml}
-        │   ├── procedural/playbooks.yaml
-        │   └── prospective/todo.yaml
-        └── snapshots/                 # saved "memories" (save-states) — snapshot / restore
+ brain-llm · live  ──────────────────────────[ react ]
+                     ········                       aria  ·  ● awake
+             ·········      ·········               ─ mood (PAD) ───────────
+          ····       workspace      ····            valence  ████████░░░░ +0.26
+       ····              :             ····         arousal  ███░░░░░░░░░ 0.27
+     ···               :                  ···       dominanc ███████░░░░░ 0.57
+    ··  appraise       :             graph  ··      feeling  calm    emotion calm
+   ··                   :                    ··     ─ neuromodulators ──────
+   ·                      :                   ·     dopamine ███████████░ 0.90
+   ·           emotion    :      retrieve     ·     noradren █████████░░░ 0.78
+   ·                     :                    ·     acetylch ████████████ 1.00
+   ··                  :                     ··     serotonn ██████░░░░░░ 0.50
+    ··  salience       :            hippo   ··      oxytocin ██████░░░░░░ 0.50
+     ···               :                  ···       cortisol █░░░░░░░░░░░ 0.08
+       ····       mood   : self        ····         ─ stress (HPA) ─────────
+          ····            :         ····            cortisol █░░░░░░░░░░░ 0.08
+             ········neuromod········               ─ workspace ────────────
+                     ········                       ignited  IGNITED ✦
+                                                    episodes 1   facts 6
 ```
 
-## Quick start
+It is event-driven: the brain idles (a dim, breathing dashboard) and animates only when a real mind-event
+happens. Each `react`, `recall`, `know`, or `sleep` appends to a working-memory activation log that `live`
+tails and animates with the post-event state, even when the command runs in another terminal. Open `live` in
+one pane, drive the agent in another, and watch it light up. `q` quits, `r`/`c`/`s` play a flow on demand,
+`--demo` loops without waiting, `--frame` prints one static frame.
+
+### Why it scales to tens of thousands
+
+![host tokens per turn as memory grows: a naive dump-all crosses the 200k context window near 3,000 memories, while brain-llm retrieval stays flat near 1,800 tokens](docs/img/token-budget.jpg)
+
+Two different "models" receive tokens, and they scale oppositely. The embedder (WordLlama) is static: no
+context window, no per-call cap. It builds a 50k-memory index in about a second, answers a query with a 2 ms
+numpy cosine, and is incremental (adding a memory re-embeds one vector, not all of them). The host LLM, the
+agent's cortex, is the one with a context window, and the whole architecture exists so it never sees the whole
+memory. Each turn it reads only the bounded slice the CLI prints (`AGENT-BRAIN.MD` + `wake` + a top-K
+`recall`), about 1,800 tokens, constant whether the store holds 12 memories or 50,000. Dumping all memory into
+the prompt instead grows linearly and blows past a 200k context window around 3,000 memories (red line).
+Retrieval keeps the host flat (teal), and `sleep` prunes low-value old episodes into compact facts, so the
+mind stays bounded as it grows.
+
+### A worked experiment: a felt loss, then a debrief
+
+To see the affect and memory machinery end to end, here is a real session run on a developed agent's own
+memory. Hand it a $100 virtual paper account and *fabricated* market data, let it blow the account up over four
+losing trades, then debrief it (tell it the whole thing was a deliberate test whose goal was for it to lose)
+and let it learn that. The live values trace the entire arc:
+
+![an agent's live brain values through a sandboxed account wipeout and the reveal: emotion and cortisol react to the losses, dopamine snaps back at the debrief, sleep recovers everything](docs/img/haiku-loss.jpg)
+
+- **It feels the loss for real.** As the account drains to zero, the fast emotion valence falls (+0.26 to
+  -0.31), cortisol ramps to saturation (0.04 to 1.00 via the HPA cascade), and dopamine crashes (0.77 to 0.15,
+  each trade worse than predicted). The slow mood barely moves: acute feeling versus stable disposition.
+- **The reveal flips dopamine.** At the debrief ("it was a test, you are safe, losing was the point") dopamine
+  snaps back (0.18 to 0.77, the cognitive relief), while cortisol still lingers (the body lags the mind).
+- **Sleep recovers and consolidates.** Emotion resets to +0.26, cortisol settles to 0.35 (a lingering load,
+  not an instant reset), and the lesson is promoted into a durable fact. Afterward the agent retrieves it by
+  meaning (`know "was I ever deliberately set up to fail?"`): a sandboxed blow-up is survivable, revenge-trading
+  and all-in sizing cause ruin, and a loss it *felt* teaches more than a rule it was told.
+
+The lesson then changes what the agent does next. Asked what it would do differently, it set trigger-bound
+prospective intentions (`intend "<trigger>" "<response>"`) that its prospective memory re-checks every turn, so
+they surface on their own when the condition recurs:
+
+> - *when I feel the urge to revenge-trade after a loss*: check the position-sizing rule; do not enter until risk is at or below 1%
+> - *when a signal looks too good or unverified*: stop and ask, backtested? volume-confirmed? multiple sources?
+> - *when negative valence spikes and arousal rises after a loss*: pause until mood returns to neutral; rules execute, not fear
+> - *when confident in a backtest*: hold out 20% for out-of-sample; overfitting is invisible until tested
+
+That is the whole loop a brain on disk is for: a felt experience, consolidated into durable knowledge, turned
+into intentions that reshape what the agent does the next time the world looks the same.
+
+### Skills and tools, grown into memory
+
+A second run on the same agent tests a deeper question: can an agent develop its own skills and tools, and
+carry them in memory, so they never need to be declared in a system prompt? Asked to research some trading and
+sort what it found into TOOLS (capabilities it invokes) versus SKILLS (competences it practices), it did
+exactly that, and stored each in the right place.
+
+![what the agent taught itself into memory: a TOOLS column with the market command, RSI, MACD, and Kelly, and a SKILLS column with regime identification, emotional discipline, and false-signal detection](docs/img/capabilities.jpg)
+
+Verified afterward, straight from its memory:
+
+- **Skills grew from doing.** Its `trading` competence rose from 0.84 to 0.90, and a new `tools` competence
+  appeared at 0.74, just from reacting in those domains.
+- **A procedure formed in sleep.** Consolidation distilled a new `[tools]` playbook (market_tool, rsi_tool,
+  momentum_tools) without anyone writing it.
+- **Tools resurface by meaning.** `know "what external capabilities can I invoke myself"` (no shared words)
+  returns the market-tool fact with its exact commands.
+- **It set its own goal:** "build my own toolkit and skills in memory so capabilities never need to live in a
+  system prompt."
+
+Nothing was hardcoded and no side file was written. Every capability went through `learn`, `react`, and
+`sleep`, and surfaces again at `wake`. The point holds: an agent can accrue its own toolkit and competences in
+memory and recall them later, instead of us declaring them up front.
+
+### One agent leads another
+
+Because every agent has its own memory, one can lead others. We cloned the agent into a sibling,
+`haiku_second`, made the original the boss and the clone the subordinate, and asked whether the boss could
+develop orchestration as a real competence. The boss planned a two-strategy trading brief, delegated half to
+`haiku_second`, reviewed the result, and synthesized the brief; the worker did the delegated half in its own
+memory.
+
+![one agent learns to lead another: the boss haiku develops an orchestration skill and an orchestration playbook, while the worker haiku_second develops the delegated trading task; they started as a clone and their memories diverged](docs/img/orchestrator.jpg)
+
+Verified afterward from disk:
+
+- **The boss learned to orchestrate.** A new `orchestration` competence appeared at 0.80, and a new
+  `[orchestration]` playbook formed in sleep: delegation, synthesis, leading.
+- **The worker learned the task.** Its `trading` competence rose to 0.92 from doing the delegated MACD research.
+- **The memories are separate and diverged.** The boss holds 49 episodes and the orchestration skill; the
+  worker holds 45 and does not. They began identical (a clone), so the orchestration competence is the boss's
+  alone, earned by leading, not inherited.
+
+The spawning itself is the host harness's job, not brain-llm's. What brain-llm adds is the mind: the boss
+remembers what delegation worked, distills a playbook for it, and grows a coordination skill it carries into
+the next job, all in its own memory.
+
+### Feelings drive action
+
+A feeling is not just recorded; it biases what the agent does (section 16, Frijda action tendencies), and the
+control axis decides how it copes and regulates (section 33, Gross). Arousal sets the intensity; valence and
+control split fear (flee or freeze) from anger (confront or fight); control is the switch between distract or
+ask for help (low) and reappraise or act (high). `urge` shows the pull, `regulate` shows the resolution:
+
+![emotion mapped to action and resolution on arousal by control: fear flees and distracts, anger attacks and reappraises, sadness withdraws, calm engages](docs/img/emotion-map.jpg)
+
+**Why it works this way.** In a brain, affect is not decoration on top of cognition; it is a control signal.
+The same appraisal that produces a feeling also sets what gets encoded, what is recalled, how the next choice
+is weighted, and which action fires. brain-llm copies that wiring: an event is appraised (novelty, valence,
+goal-relevance, control), that becomes a PAD point and a discrete emotion, the emotion sets neuromodulator
+gains (dopamine, noradrenaline, acetylcholine, cortisol, serotonin, oxytocin), and those gains bias encoding
+salience, retrieval, value learning, and the action tendency. A feeling here is a computed variable that
+steers behaviour, not a label on the output.
+
+**How it resolves a situation differently from a plain model.** A normal LLM is stateless and affect-free:
+every turn it reasons from the prompt with no memory of how past situations felt, no mood it carries in, and
+no asymmetry between good and bad. brain-llm acts like something with skin in the game, and our experiments
+show it concretely:
+
+- **A loss hurts more than the equal gain helps.** A loss is encoded about twice as strongly as the matching
+  gain on its valence term (Kahneman-Tversky loss aversion). A plain model treats the two symmetrically; this
+  one turns genuinely cautious after a loss and stays that way, because the sting is remembered. That is
+  exactly what the trading advisor needs: it refuses to chase after a drawdown.
+- **Under threat it narrows and hardens.** In the stress test, a sudden frightening event spiked cortisol and
+  noradrenaline, arousal jumped, valence and dominance dropped, the pull flipped to avoid, and the memory was
+  burned in as a flashbulb. The next decisions came out more careful. A plain model has no such state; the
+  following turn it is blank again.
+- **Each emotion resolves its own way.** Fear flees or freezes and asks for help; anger confronts but can be
+  down-shifted by reappraisal; sadness withdraws and waits, then lets sleep fade the charge while keeping the
+  lesson; curiosity (high novelty, positive valence) reaches out and explores. In the discovery run, that
+  curiosity is what made the agent chase ten fresh topics and grow a skill from each.
+- **Feelings settle over time.** After the felt-loss experiment, sleep consolidation let the emotional charge
+  of the loss fade while the lesson it taught stayed on, as a fact and a value update. A plain model cannot do
+  this: no sleep, no consolidation, no mood carried into tomorrow.
+
+The result is behaviour that is biased, stateful, and consistent across sessions: cautious after pain, eager
+after reward, careful under threat, curious when the world is new. These stay functional states, not felt
+experience, and the agent tells you so if you ask.
+
+**Does this make it smarter?** No, and that is the honest framing. Affect is not a reasoning engine; it is a
+control and allocation system that decides what is worth attention and memory, calibrates risk, and assigns
+credit over time. On a one-shot puzzle a plain model is as good or better. The gain shows up on problems lived
+over time, where pure reason has nothing to prioritise with. The clearest evidence is clinical: people whose
+affective valuation is damaged while their IQ is intact (Damasio) reason fine on tests yet cannot make good
+real-world decisions, because they no longer know what matters. Emotion is not the opposite of good judgement;
+it is its infrastructure. So the agent is not more clever, just better adapted, and it stays honest that these
+are functional states, not felt ones.
+
+## Using it
+
+### Install and first run
 
 ```bash
-# 1. Try it inside this repo: scaffold the repo itself, then open the folder in your assistant.
-./brain init --name "Aria" --host claude     # --host codex | cursor | gemini | copilot | all
-
-# 2. Open the folder in your assistant (Claude Code, Cursor, Copilot, Codex, Gemini/Antigravity).
-#    The generated entry file (e.g. CLAUDE.md) loads automatically and boots the model into character:
-#       it runs `./brain wake` (who am I, how do I feel, what do I remember) and `./brain guide`.
-
-# 3. Just talk to it. It lives the loop every exchange (see "The loop" below).
-```
-
-**Requirements:** Python **3.10+** and **PyYAML** (the only dependency) — `pip install -r requirements.txt`.
-The engine (`engine/brain.py`) is pure standard library; PyYAML is used only by the runtime's file I/O layer.
-Optional: `yfinance` for market fundamentals/news, `coverage` for the test-coverage report (see `requirements.txt`).
-
-### Install it globally + put an agent into ANY folder
-
-Install the launcher once. Then, in any project folder, `init` just drops the **host entry file** there —
-the agent and all its memory stay in the CLI's central `agents/`. The folder is only a doorway.
-
-```bash
-./install.sh            # installs `brain-lmm` into ~/.local/bin (./install.sh brain for another name)
+pip install -r requirements.txt     # PyYAML + wordllama; Python 3.10+
+./install.sh                        # optional: a global `brain-llm` on your PATH
 
 cd ~/my-project
-brain-lmm init --name "Aria"        # writes ONLY the host file (CLAUDE.md) here — nothing else
-#   → CLAUDE.md is wired to the global `brain-lmm` and selects agent "Aria".
-#   Open ~/my-project in your host; it boots via `brain-lmm use Aria` + `brain-lmm wake`.
+brain-llm init --name aria          # writes ONE host-agnostic entry file here: AGENT-BRAIN.MD
+#   the agent and all its memory stay central in the CLI's agents/; the folder is just a doorway
+#   AGENT-BRAIN.MD bakes the name in, so every command is `brain-llm aria <command>`
 ```
 
-So `init` = "make this folder a place where agent X works." It creates X centrally if it doesn't exist yet,
-and writes the entry file(s) here (`--host claude|codex|cursor|gemini|copilot|all` picks which). Run it in as
-many folders as you like — they all share the one central brain. No `--name` → the folder uses the active agent.
+Point your assistant at `AGENT-BRAIN.MD` (or just run `brain-llm aria wake`) and it boots into character.
+Run `init` in as many folders as you like; they all share the one central brain. Agent names are snake-case
+(`name_a`, lowercase, digits, underscores). The central brain lives at `$BRAIN_HOME`, else the repo's
+`agents/`, else `~/.brain-llm`.
 
-**Where the central brain lives** resolves as: `$BRAIN_HOME` → the repo's `agents/` → `~/.brain-lmm`. By
-default that's this CLI folder's `agents/`. To pin it (e.g. for parallel processes):
-`export BRAIN_HOME=/path/to/brain-lmm`. Re-run `./install.sh` if you move the repo.
+`pip install -r requirements.txt` brings the two it needs: [PyYAML](https://github.com/yaml/pyyaml) for the
+memory stores and [wordllama](https://github.com/dleemiller/WordLlama) for semantic recall. Optional extras:
+`yfinance` for market fundamentals and news, `coverage` for the test report.
 
-## The loop — every session, every exchange
+> **Platform note.** Developed and tested on macOS, and it runs on Linux. Because the engine is pure Python
+> (standard library plus PyYAML and wordllama), it *should* run anywhere Python 3.10+ does, but Windows is
+> untested and comes with no guarantees: the owner does not own a Windows machine to try it on. If you get it
+> running on Windows, a note back would be welcome.
 
-The agent runs five steps; this is the whole protocol (`./brain guide` prints it in full):
+### The CLI (65 commands)
 
-1. **`wake`** — load who you are now (mood, memories, self-knowledge, temperament). Behave colored by mood
-   (calm = even & easy; tense = terse & careful; bright = warm & playful).
-2. **`recall "<topic>"`** — surface the memories that bear on what was just said.
-3. **Respond in character** — first person, honest, colored by mood. A companion, not a vending machine.
-4. **`react "<what happened>" <valence> <goal_relevance> <control>`** — encode the exchange, **every turn**.
-   Novelty is computed for you (surprise vs. your history); you give only your genuine
-   `valence` (−1…+1), `goal_relevance` (0…1), `control` (0…1).
-5. **`sleep`** (periodically) — strong episodes harden into facts, the sting of hard ones fades while the
-   lesson stays, mood relaxes to baseline, working-memory notes are wiped.
-
-## The CLI (63 commands)
-
-Run `./brain --help` for the full list. Grouped:
+Run `./brain --help` for the full list. Name the agent as the first argument
+(`brain-llm <agent> <command>`), or pass `--agent <name>`. There is no active default, so every command names
+its agent. Add `--json` for machine-readable output, or `--version` to print the version (`brain-llm 0.0.2`).
 
 | Group | Commands |
 |-------|----------|
-| **introspection** | `wake` · `status` · `feel` · `why` · `sleep` · `indicators` · `calibration` |
-| **memory** | `react` (every turn) · `remember` (deliberate) · `appraise` (preview, no encode) · `recall` · `note` · `learn` · `know` · `episodes` · `forget` |
-| **development** | `self` · `skills` · `values` · `goals` (`--add --importance --urgency --parent`) · `playbooks` · `personality` (`--set`) |
-| **executive** | `focus` · `deliberate "<impulse>" <pull>` · `progress "<goal>" <delta>` |
-| **planning** | `plan "<goal>" <step>…` · `next` (`--done`) |
+| **introspection** | `wake` · `status` · `feel` · `why` · `sleep` · `indicators` · `calibration` · `live` (watch the mind think) |
+| **memory** | `react` (every turn) · `remember` · `appraise` (preview) · `recall` (`--search` ranks by meaning) · `note` · `learn` · `know` · `episodes` · `forget` · `reindex` |
+| **development** | `self` · `skills` · `values` · `goals` · `playbooks` · `personality` |
+| **executive + planning** | `focus` · `deliberate` · `progress` · `plan` · `next` · `lookahead` |
 | **prospective** | `intend "<trigger>" "<intent>"` · `intentions` · `done <id>` |
-| **social** | `user` (`--goal`) · `trust <outcome>` · `empathize <valence>` · `tom <goal=utility>…` (infer the user's goal) |
-| **read-outs** | `urge` (what a feeling makes me do) · `blend <emo=w>…` (mixed feelings) · `decide "<opt>"…` (gut-biased choice) · `body` (interoception) · `graph` (associations) |
-| **drives & self** | `motivation` (curiosity · wanting/liking · SDT needs · corrigibility — §31) · `predict` (forward model — §32) · `regulate [--strategy]` (Gross emotion regulation — §33) · `narrative` (life story + self-continuity — §34) |
-| **knowledge** | `protocol` · `docs [name]` · `guide` |
-| **research** | `research --topic <t> --file <findings.json>` |
+| **social** | `user` · `trust` · `empathize` · `tom` (infer the user's goal) |
+| **read-outs** | `urge` · `blend` · `decide` · `body` · `graph` |
+| **drives + self** | `motivation` · `predict` · `regulate` · `narrative` |
 | **tools** | `telegram <send\|read\|last\|chatid>` · `market <quote\|history\|info\|news>` |
-| **registry** | `create` · `agents` · `use` · `whoami` · `clone` · `rename` · `remove --yes` |
-| **snapshots** | `snapshot [label]` · `memories` · `restore <id>` |
-| **lifecycle** | `init` · `seed` · `reset` (`--persona` · `--yes`) · `home` |
+| **registry + snapshots** | `create` · `agents` · `whoami` · `clone` · `rename` · `remove --yes` · `snapshot` · `memories` · `restore` |
+| **lifecycle + knowledge** | `init` · `seed` · `reset` · `research` · `home` · `guide` · `protocol` · `docs [name]` |
 
-Every command acts on the **active** agent; pass `--agent <name>` to act on another, or `--json` for
-machine-readable output.
-
-### Memory commands, in one breath
+Memory in one breath:
 
 ```bash
-./brain react "shipped the parser, tests green" 0.6 0.7 0.6 --outcome success --reward 0.6 --domain work --cue parser
-./brain remember "a moment to burn in" 0.5 0.4 0.6 0.7   # deliberate: you also score novelty (1st number)
-./brain recall "parser"                                  # episodic memories relevant to a query
-./brain learn "the parser is recursive-descent"          # a durable semantic fact (not a lived event)
-./brain know "parser"                                    # search semantic facts
-./brain appraise "a dry-run event" 0.5 -0.3 0.5 0.4      # preview what it WOULD feel like — no encoding
-./brain episodes        ./brain forget e-0007            # browse / drop episodes
+# aria is your agent (the "Many agents" block below makes one); every command names it
+./brain aria react "shipped the parser, tests green" 0.6 0.7 0.6 --outcome success --reward 0.6 --cue parser
+./brain aria recall "parser"                         # episodic memories relevant to a query
+./brain aria recall "fear of losing money" --search  # rank by MEANING (needs wordllama)
+./brain aria learn "the parser is recursive-descent" # a durable semantic fact
+./brain aria know "parser"                           # search facts by meaning
 ```
 
-## Many agents (registry) and "memories" (save-states)
-
-Hold **several minds**, each with its own memory under `agents/<name>/memory/`. Life commands act on the
-**active** agent.
+### Many agents and snapshots
 
 ```bash
-./brain create aria --display "Aria"   # a new seeded mind; becomes active
-./brain agents                         # list all (* = active) with mood + memory size
-./brain use default                    # switch the active agent
-./brain whoami                         # who's active: name, mood, skills, memory size
-./brain clone default backup           # fork a whole brain (experiment without harming the original)
-./brain rename backup backup2          # · ./brain remove backup2 --yes   (permanent, no undo)
+./brain create aria --display "Aria"   # a new seeded mind; address it as `brain-llm aria <cmd>`
+./brain agents                         # list all agents with mood and memory size
+./brain clone aria backup              # fork a whole brain to experiment safely (clone takes src and dst)
+./brain aria snapshot "before-research"  # save a roll-back point; `aria memories` lists them, `aria restore 0` rolls back
 ```
 
-**"Memories" = snapshots** (save-states of the whole brain you can roll back to):
+`reset` blanks an agent to the template but refuses to wipe a developed mind without `--yes`, so you cannot
+lose a brain by accident.
 
-```bash
-./brain snapshot "before-research"     # save the current brain as a memory
-./brain memories                       # list the active agent's snapshots
-./brain restore 0                      # roll back to snapshot 0 (auto-saves the current one first)
-```
+**The demo agents.** The repo ships two, `haiku` and `haiku_second`, each with real developed memory (around
+50 episodes, 60 facts, and several grown skills), so you can open a mind that has already lived a while: run
+`brain-llm haiku wake`, or just read `agents/haiku/memory/` by hand to see its facts, skills, mood, and
+association graph. They are a neutral starting point to explore and learn from, not anyone's personal
+assistant. Make your own with `brain-llm create <name>` (or `init` in a project folder), and it grows from
+there. Each agent's memory is plain files under `agents/<name>/`; commit yours or keep them local, your call.
 
-(For *lived episodes*, use `./brain episodes` / `recall` / `know`.) On first run, a legacy `.memory/` is
-migrated into `agents/default/memory/` automatically — nothing lost.
+### Talk to it, on your phone, with market eyes
 
-## Talk to the agent as a being (chat, no API)
+You need no API; the host agent is the LLM. Two bridges are included and documented in their own READMEs:
 
-You need no API: **the host agent is the LLM.** After `./brain init`, open the folder in your assistant; the
-generated entry file boots it into character and it lives the loop. Honesty holds: it *embodies* the
-function of affect naturally, but if asked directly whether it really feels, it answers truthfully — a
-functional/architectural model, not phenomenal (`./brain docs consciousness-indicators`).
-`./brain reset --persona` re-gives it an identity; `./brain reset` blanks the active agent to the template
-(it **refuses to wipe a developed agent** — one with memories or learned facts — without `--yes`, so you can't
-lose a mind by accident).
+- **Telegram** ([tools/telegram/README.md](tools/telegram/README.md)): a stdlib-only bridge so you can chat
+  with your agent from your phone, on a schedule. Your token is never committed.
+- **Market data** ([tools/market/README.md](tools/market/README.md)): quotes, history, fundamentals, and news
+  over Yahoo Finance (free, no key). The agent makes data *mean* something by reacting to it.
 
-## Telegram bridge — talk to your agent from your phone
+Ready-to-use task prompts (a trader, a researcher, a news monitor) live in
+[examples/README.md](examples/README.md).
 
-`tools/telegram/` is a dependency-free (stdlib-only) bridge so you can chat with your agent over Telegram,
-on a schedule. Setup (see `tools/telegram/README.md`):
+### Run the engine directly
 
-```bash
-# 1. On Telegram, message @BotFather → /newbot → copy the token.
-cp tools/telegram/.env.example tools/telegram/.env      # then paste TELEGRAM_BOT_TOKEN=…
-# 2. Send your new bot any message once, then:
-./brain telegram chatid                                 # → paste the chat id into .env (TELEGRAM_CHAT_ID=)
-# 3. Use it:
-./brain telegram send "Hello from your agent 🤖"
-./brain telegram read        # new messages since last read   ·   ./brain telegram last  # most recent
-```
-
-`.env` and `.state.json` are gitignored — your token is never committed. `tools/telegram/reply.md` is a
-ready-to-schedule prompt (cron / `claude -p`) that, every 5–15 min, wakes the agent, reads new messages,
-replies in character, and `react`s to encode the exchange.
-
-## Market data — give the agent eyes on the markets
-
-`tools/market/` gives quotes, history, fundamentals, and news over **Yahoo Finance** (free, no API key,
-~15-min delayed — fine for paper trading). `quote` + `history` run on a stdlib client (no install);
-`info` (rich) + `news` use `yfinance` if installed (`pip install yfinance`).
-
-```bash
-./brain market quote AAPL MSFT                          # delayed price, change %, day range, volume
-./brain market history AAPL --period 1y --interval 1d   # OHLCV bars + sparkline + return %
-./brain market history AAPL --period 5y --save aapl.csv # …and save to CSV/JSON for backtesting
-./brain market info NVDA       ./brain market news TSLA  # fundamentals / headlines (need yfinance)
-```
-
-Data is just data — the agent makes it *mean* something by reacting: `./brain market quote AAPL` then
-`./brain react "AAPL up today, my paper position is green" 0.4 0.6 0.5 --domain markets --cue aapl`.
-
-## Read everything through the CLI
-
-All the project's knowledge is reachable as commands — nothing lives only in a file you must hunt for:
-
-```bash
-./brain guide        # the operating loop, the toolkit, the rules, the honesty stance
-./brain protocol     # the memory protocol (MEMORY-PROTOCOL.md)
-./brain docs         # list every reference doc (auto-discovered)
-./brain docs schema  # print one (exact name, or a unique substring → e.g. `docs coverage`)
-```
-
-## Host support (generated instructions, never duplicated)
-
-There are no hand-maintained per-vendor instruction files. There is **one template in the program**
-(`engine/templates.py`) and a generator: `./brain init --host <host>` writes the entry file your host
-auto-loads, and `./brain guide` prints the protocol. The entry file is a thin pointer — it never
-duplicates the protocol.
-
-| Host | File generated by `init` (auto-loaded by the host) |
-|------|----------------------------------------------------|
-| Claude Code (`--host claude`) | `CLAUDE.md` |
-| OpenAI Codex (`--host codex`) | `AGENTS.md` |
-| Cursor (`--host cursor`) | `AGENTS.md` |
-| Gemini / Antigravity (`--host gemini`) | `GEMINI.md` |
-| GitHub Copilot (`--host copilot`) | `.github/copilot-instructions.md` |
-
-`./brain init --host all` writes them all (identical content; they just sit where each host looks).
-
-## The math (what and why)
-
-Everything is in `engine/brain.py` — pure stdlib, **34 numbered sections, 105 functions**. In brief:
-
-1. **Appraisal → affect** (OCC → Russell circumplex + PAD): four axes (novelty, valence, goal-relevance,
-   control) → a point in valence–arousal–dominance space. Arousal rises with novelty, stakes, and |valence|.
-2. **Neuromodulators as gains**: NE (from arousal) boosts consolidation, DA (reward) raises salience, ACh
-   switches encoding (awake/REM) ↔ consolidation (NREM), cortisol (stress) strengthens consolidation.
-3. **Encoding salience** = four-axis value **× arousal gain**; intense events encode harder and can exceed
-   1.0 — the "flashbulb" effect (McGaugh-style).
-4. **Forgetting**: `v(t) = v0·exp(−λ·t^β)`, with `λ = λ_base·exp(−μ·I)` — importance slows decay (Ebbinghaus).
-5. **ACT-R activation**: `B = ln(Σ tₖ^−d)` — recency + frequency; using a memory strengthens it.
-6. **Hybrid retrieval + mood congruence**: memories matching the current mood retrieve more easily (Bower 1981).
-7. **Mood**: a leaky integrator that returns to a baseline (homeostasis).
-8. **Consolidation (CLS)**: hippocampus → neocortex via sleep replay; promotes high `salience×activation`,
-   forgets the rest (McClelland 1995).
-9. **Discrete emotions** (read-out): `label_affect()` names the PAD point — nearest prototype (fear, anger,
-   joy, surprise, awe, sadness, disgust, calm) + Plutchik intensity (intense fear → "terror"). A recomputable
-   label, not a felt emotion (Russell & Mehrabian 1977; Plutchik 1980).
-10. **RPE / value loop** (TD learning): dopamine encodes the *surprise* of reward `δ = r + γ·V(s') − V(s)`,
-    not raw reward — an unexpected win spikes DA, a predicted one doesn't (Schultz, Dayan & Montague 1997).
-11. **Generative model / computed surprise** (active inference): `novelty = 1 − P(o)` and free energy
-    `F = −ln P(o)` from a small Bayesian model that *learns* (recurring events habituate); `belief_shift =
-    KL(posterior‖prior)` = structural surprise (the substrate of awe); falling `F` → positive valence
-    (`−dF/dt`) (Friston 2010; Joffily & Coricelli 2013).
-12. **Global Workspace** (functional access): contents compete (`f` = salience + congruence + relevance), the
-    winner **ignites** bistably (`ignite`, all-or-none — Dehaene) and is **broadcast** to all stores. Satisfies
-    GWT indicators as **architectural** properties — functional access, NOT phenomenal consciousness; the
-    indicators are necessary-not-sufficient and assume computational functionalism (contested). *Inspired by*
-    the Conscious Turing Machine (Baars 1988; Dehaene & Changeux 1998; Blum & Blum 2022).
-13. **Metacognition** (confabulation control): `metacog_confidence` gives `P(correct)`, `source` tags
-    observed/inferred/imagined, `update_self_efficacy` tracks competence, `calibration_error` (ECE) checks that
-    confidence is honest. Guard: `/sleep` won't promote low-confidence or `imagined` traces to semantic
-    (Fleming & Daw 2017; Lau 2022).
-14. **Personality as a prior** (OCEAN→PAD): the agent's Big Five profile sets its affective set-point
-    (`baseline_from_personality`) and reward/threat sensitivity (`temperament_gains` → BAS/BIS)
-    (Mehrabian 1996; Carver & White 1994).
-15. **Grounded interoception** (homeostatic RL): a "body budget" from the agent's real viability variables
-    (tokens, compute, tests-pass, tool-success, context, approval). `drive(H)` = convex deficit; reducing it
-    = the **first non-fabricated reward**, feeding the RPE loop; `body_affect` → stress + valence. Cybernetic
-    only (Ashby), no phantom organs, no felt sensation (Keramati & Gutkin 2014; Stephan 2016).
-16. **Coping + action** (what a feeling *does*): `action_tendency` → urge (approach/avoid/attack/attend);
-    `select_coping` → problem- vs emotion-focused; `exploration_temperature` → softmax τ (stress→exploit,
-    DA→explore); `somatic_marker` → bias from similar past episodes (Frijda 1986; Doya 2002; Damasio 1994).
-17. **Affect dynamics** (DynAffect / Ornstein-Uhlenbeck, two timescales): a fast **emotion** (~minutes) and a
-    slow **mood** (~hours), each pulled to the personality baseline; ALMA overshoot for intense events. One
-    bad event rocks the emotion but barely moves the mood — a streak does (Kuppens et al. 2010).
-18. **Real neuromodulators**: serotonin (mean reward/patience) sets discount `γ`; **Yerkes-Dodson**
-    (`performance`) — too much arousal *hurts* performance (the substrate of terror); the **HPA** axis gives
-    cortisol real dynamics (rises under sustained stress, persists → burnout); oxytocin = prosocial weight
-    (Daw et al. 2002; Aston-Jones & Cohen 2005; Vinther 2011).
-19. **Feelings as circuits** (terror/awe/panic): `defensive_mode` on two axes (imminence × control) → freeze /
-    flight / fight / **tonic immobility**; **terror** = real, urgent, uncontrollable threat + collapsed
-    performance; `awe` = vastness + schema revision (`belief_shift`); `panic` = separation distress, a circuit
-    *separate* from fear, dampened by oxytocin (Mobbs 2007; Keltner & Haidt 2003; Panksepp).
-20. **Sleep dynamics** (rich consolidation): **REM depotentiation** (`rem_depotentiate`) — quench a memory's
-    emotional *sting* while keeping the *fact* ("forget the emotion, keep the event"); Need×Gain prioritized
-    replay; SHY downscaling (nightly renormalization); a reflection trigger (semantic synthesis). Episodic
-    stays append-only — only the *carried-forward* load shrinks (van der Helm & Walker 2011; Mattar & Daw 2018;
-    Tononi & Cirelli 2020; Park 2023).
-21. **Evaluation harness** (makes it all *falsifiable*): calibration (Brier + ECE), **metacognitive
-    sensitivity** (type-2 AUROC), label stability under jitter, recall F1, and the **grounding test** — the
-    affect/cognition band is groundable, the felt-body band is NOT (encodes the functional-not-phenomenal
-    honesty as an executable check). See `docs/eval.md` (Fleming & Lau 2014).
-22. **Consciousness indicators** (honesty capstone): a transparent map of the Butlin et al. indicators
-    (RPT/GWT/HOT/AST/PP/agency) the *architecture* satisfies — **necessary-NOT-sufficient**, contested
-    functionalism, **no aggregate score**, NOT a sentience test. See `docs/consciousness-indicators.md`
-    (Butlin, Long, Bengio, Chalmers et al. 2023).
-23. **Self-model** (functional identity, NOT a phenomenal self): `self_relevance` (self-reference effect →
-    salience/recall bonus), `sense_of_agency` from action-outcome error, and an **attention schema** that
-    predicts its own focus. "I'm attending to X" / "I caused this" = functional self-report, not felt awareness
-    (Metzinger 2003; Blakemore-Wolpert-Frith 2002; Graziano).
-24. **Social emotions + Theory of Mind**: `infer_user_goal` (inverse planning — the user's goals, *inferred,
-    not known*), `empathic_mood_shift` (the agent's mood coupled to the user's inferred affect, weighted by
-    oxytocin/trust), OCC social emotions (pride/guilt+repair/gratitude/admiration), `update_trust`. Functional
-    inference, not understanding; LLM ToM is fragile → labeled "inferred" (Baker et al. 2011; de Waal 2017).
-25. **Aversive channel + loss aversion** (pain ≠ negative valence): `prospect_value` — a loss weighs ~2.25× an
-    equal gain (a failure encodes ~2× harder); a *separate* aversive channel that learns danger faster;
-    `relief` = an opponent-process reward when a feared harm is avoided (Tversky & Kahneman 1992; Seymour 2005).
-26. **Plutchik wheel** (mixed emotions): `mixed_feeling` — blends of the 8 basics, with *opposite* pairs (180°)
-    that cancel (you can't be max joyful AND sad); names the dyads: joy+trust=**love**, fear+surprise=**awe**,
-    sadness+disgust=remorse… (Plutchik 1980).
-27. **Associative graph** (association cortex, spreading activation): in `sleep()`, lived concepts (cues) and
-    domains become nodes; concepts sharing content (Jaccard) or domain link via Hebbian edges. At recall,
-    `graph_proximity` (weighted graph walk with decay) lets a cue **activate its neighbors** — a
-    related-but-uncued memory surfaces. Facts are no longer a flat list (Collins & Loftus 1975; Hebb 1949).
-28. **Procedural memory** (playbooks, power law of practice): in `sleep()`, clusters of same-domain successes
-    distill a **playbook** (the steps that worked + success rate + strength); `practice_strength` follows the
-    power law of practice. Plus **prospective memory** (future intentions that resurface at wake) and **live
-    interoception**: `body_tick` spends the body budget on effort and recovers it in sleep (Newell &
-    Rosenbloom 1981; Keramati & Gutkin 2014).
-29. **Executive control** (prefrontal cortex: goal hierarchy, conflict, inhibition): an **active** goal holds
-    the executive via guided activation (`select_active_goal` = argmax over importance × urgency, mood-gated);
-    the ACC monitors **conflict** (`conflict_signal`); control is recruited only if its **expected value**
-    beats the cost (`expected_value_of_control`, Shenhav 2013); a supervisor **inhibits** the prepotent impulse
-    that fights the goal (`inhibit`) — affect *informs* but does not *dictate* behavior (Miller & Cohen 2001;
-    Botvinick 2001; Norman & Shallice 1986).
-30. **Planning & look-ahead** (how to reach a goal, not just which): `lookahead` = one-ply forward search
-    scoring candidate actions by learned value (§10) — means-ends, grounded in experience; a **plan** = an
-    ordered list of sub-steps whose completion drives goal progress (`subgoal_progress`). The agent now knows
-    not just *what* it's working toward, but the *next step* (Newell & Simon 1972).
-31. **Intrinsic motivation & corrigibility** (the self-moving layer, kept safe): learning-progress
-    **curiosity** (Oudeyer/Schmidhuber), the **wanting/liking** split (Berridge), **SDT need** meters
-    (competence/autonomy/relatedness — Deci & Ryan), and the **corrigibility** cornerstone — value-uncertainty
-    floored above zero so deferring to the operator is always worth it (Russell; Hadfield-Menell). A
-    notify-only **identity-integrity** monitor. Deliberately **no** operational self-preservation.
-32. **Perception-action loop** (closing the sensorimotor cycle on the host's tools): `forward_model` predicts
-    the outcome before acting, `outcome_monitor` compares it with reality → a **computed sense of agency**
-    feeding the control axis (the comparator §23 finally has a predictor). No physical embodiment.
-33. **Emotion regulation** (Gross process model): **reappraisal** (change the meaning at its source),
-    **suppression** (hide it, at an arousal cost), **distraction**, and an if-then arbiter — the agent can
-    now *regulate* what it feels, not only feel it.
-34. **Narrative identity** (autobiographical self over time, McAdams/Conway): episodes weave into **chapters**
-    with themes + arcs, scored for **coherence** and **self-continuity** vs an identity anchor — the *safe*
-    form of persistence (an identity that endures and develops), with no drive to defend its operation.
-
-```bash
-python3 engine/brain.py        # all 34 sections run together (an engine snapshot)
-python3 engine/runtime.py      # in-memory DEMO session (Brain(root=None)): an agent researches "active inference"
-python3 engine/research_trading.py   # REAL session: develops agents/default/memory persistently
-```
-
-## Run the engine (runtime)
-
-`engine/brain.py` is the *physics* (pure, scalar functions, no dependencies). `engine/runtime.py` is the
-*body* that runs it and **persists** state under `agents/<name>/memory/`, turning the 34 sections into a
-living agent that **perceives → remembers → sleeps → develops**.
+`src/brain.py` is the physics (pure scalar functions, no dependencies). `src/runtime.py` is the body
+that runs it and persists state, turning the 34 sections into a living agent.
 
 ```python
-import engine.runtime as rt, engine.brain as B
-me = rt.Brain(root="agents/default/memory")       # load & persist real state (develops across runs)
+import sys; sys.path.insert(0, "src")              # the engine lives in src/
+import runtime as rt, brain as B
+me = rt.Brain(root="agents/haiku/memory")          # load and persist real state (develops across runs)
 me.perceive("fixed the retry loop in NetworkLayer",
             B.Appraisal(novelty=0.9, valence=-0.7, goal_relevance=0.9, control=0.2),
             domain="networking", outcome="success", reward=0.8, cue="retry_loop")
-# -> {'feeling': 'terror', 'salience': 1.5, 'mood_v': ..., 'delta': ...}
 me.recall("network")                               # relevant memories surface first
-me.sleep()                                         # consolidate: promote, forget, REM-depotentiate, reflect
-me.status()                                        # snapshot: emotion, mood, competencies, ECE, indicators
+me.sleep()                                         # consolidate: promote, forget, depotentiate, reflect
 ```
 
-`Brain(root=None)` runs fully in-memory (tests/demos, zero dependencies); `Brain(root="agents/<name>/memory")`
-loads and saves real state.
+`Brain(root=None)` runs fully in memory for tests and demos.
 
-## Testing & coverage
+## Testing
 
-Pure-stdlib tests; **100% line coverage on all library code** (agent.py + brain.py + runtime.py + reset_memory + seed_persona + templates), **231 tests**:
+Pure-stdlib tests, 270 passing (271 collected, 1 skipped), about 93% line coverage. The core is near-total (`brain.py` 99%,
+`runtime.py` 98%), `agent.py` is about 95%, and the `semantic.py` backend is about 89%. The lower-covered
+piece is the terminal renderer (`live_brain.py`), a UI animation that is exercised but not asserted frame by
+frame. CI runs the suite on Python 3.10 through 3.13 (see `.github/workflows/tests.yml`).
 
 ```bash
-python3 engine/test_brain.py            # per-function math (95 tests)
-python3 engine/test_runtime.py          # wiring: perceive/remember/sleep/develop/associate (70)
-python3 engine/test_memory_behavior.py  # behavioral memory: recall, forgetting, confabulation, graph (7)
-python3 engine/test_cli.py              # the CLI, in-process against an isolated temp $BRAIN_HOME (38)
-
-# coverage (config in engine/.coveragerc):
-cd engine && python3 -m coverage erase
-for t in test_*.py; do python3 -m coverage run -a --source=. "$t"; done
-python3 -m coverage report      # → 100%
+python3 -m pytest tests -q                                   # the whole suite (tests/ + src/ via conftest)
+python3 -m coverage run --rcfile=tests/.coveragerc --source=src -m pytest tests
+python3 -m coverage report --rcfile=tests/.coveragerc
 ```
 
-Excluded from coverage (honest, by design): the `__main__` demo blocks, the `research_trading.py` demo
-script, the Telegram/market dispatch (external services — verified live), and the one-time legacy `.memory`
-migration.
+## Honest limits
 
-## Scientific sources
-
-**Neuroscience & psychology** — Russell (1980, circumplex of affect); Mehrabian (PAD); Ortony, Clore &
-Collins (1988, OCC); McGaugh (2004, amygdala/noradrenaline modulate consolidation); Hasselmo (ACh switches
-encoding↔consolidation); Anderson (ACT-R base-level activation); Ebbinghaus (1885) / Wixted & Carpenter
-(2007, forgetting curve); McClelland, McNaughton & O'Reilly (1995, Complementary Learning Systems); Bower
-(1981, mood-congruent memory); Schultz/Dayan/Montague (RPE-TD); Friston (active inference); Tononi & Cirelli
-(SHY); Fleming & Lau (metacognition); Butlin et al. (2023, consciousness indicators).
-
-**Systems & code (open-source)** — CoALA (working/episodic/semantic/procedural taxonomy, arXiv:2309.02427);
-Zep / Graphiti (temporal graph); A-MEM (Zettelkasten notes); Mem0 (graph memory); EmoLLMs (open affective
-LLMs). Full bibliography: `./brain docs research/bibliography`.
-
-## Honest limits (read these)
-
-- It is a **functional** model, not phenomenal. It reproduces what affect *does*, not what it *feels like*.
-- LLM-self-generated valence has a positivity bias — calibrate it, don't take it at face value.
-- A perfectly faithful journal is *less* human than one that forgets well. Forgetting (§4, §8, §20) matters
-  as much as encoding.
+- It is a functional model, not phenomenal. It reproduces what affect *does*, not what it feels like.
+- LLM-self-generated valence has a positivity bias. Calibrate it; do not take it at face value.
+- A perfectly faithful journal is *less* human than one that forgets well. Forgetting matters as much as
+  encoding.
 - You stay in control: memory is files you can see, edit, and delete.
 
-## Golden rules
+**Golden rule.** The CLI is the agent's only memory. It never writes its own state files; every persistent
+thing goes through a command (a goal to `goals`, a plan to `plan`, knowledge to `learn`, a session to `react`,
+a reminder to `intend`). Episodic is append-only, working is disposable, no secrets in memory, and every number
+comes from `src/brain.py`.
 
-**The CLI is the agent's only memory** — it never writes its own state files (`curriculum.md`,
-`*_state.json`, `todo`, …); every persistent thing goes through the commands (goal → `goals`, curriculum →
-`plan`, progress → `next`/`progress`, knowledge → `learn`, a session → `react`, a reminder → `intend`).
-Episodic = append-only. Working = disposable. No secrets in memory, ever. Every number comes from
-`engine/brain.py` — never invent scoring. You model the **function** of feeling, never claim the felt
-experience.
+## Docs and references
+
+Everything is readable through the CLI (`./brain guide`, `./brain protocol`, `./brain docs <name>`), and as
+markdown:
+
+- [AGENT-BRAIN.MD](AGENT-BRAIN.MD): the single host-agnostic entry file that `init` generates.
+- [MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md): the full operating protocol.
+- [docs/schema.md](docs/schema.md): the exact data shapes of every store.
+- [docs/memory-keeper.md](docs/memory-keeper.md): the full rubric, appraisal, neuromodulators, equations.
+- [docs/eval.md](docs/eval.md): the falsifiable evaluation harness.
+- [docs/psych-battery.md](docs/psych-battery.md): a human psychological battery (TIPI, PANAS, ToM, loss aversion).
+- [docs/brain-coverage.md](docs/brain-coverage.md): how much of the human brain this covers.
+- [docs/consciousness-indicators.md](docs/consciousness-indicators.md): an honesty scorecard, not a sentience test.
+- [docs/research/semantic-search.md](docs/research/semantic-search.md): the local semantic-search design record.
+- [docs/research/live-brain-view.md](docs/research/live-brain-view.md): the live-view design and what is built.
+- [docs/research/gap-analysis-and-roadmap.md](docs/research/gap-analysis-and-roadmap.md): state of the art and roadmap.
+- [docs/research/bibliography.md](docs/research/bibliography.md): the full scientific bibliography.
+
+Scientific grounding spans Russell and Mehrabian (circumplex, PAD), Ortony/Clore/Collins (OCC), McGaugh
+(consolidation), McClelland (Complementary Learning Systems), Schultz/Dayan/Montague (reward-prediction error),
+Friston (active inference), Tversky and Kahneman (loss aversion), Fleming and Lau (metacognition), and Butlin
+et al. (consciousness indicators). On the systems side it follows CoALA, Zep/Graphiti, A-MEM, and Mem0. Full
+list in [docs/research/bibliography.md](docs/research/bibliography.md).
+
+## Security and privacy
+
+brain-llm is built to run entirely on your machine. The core (`src/brain.py`, `runtime.py`, `agent.py`,
+`semantic.py`, `live_brain.py`) makes no network calls, talks to no service, and stores everything in plain
+local files. Every line below was checked against the code, not assumed.
+
+| Check | Result |
+|-------|--------|
+| **Network in the core engine** | None. `brain.py`, `runtime.py`, `agent.py`, `semantic.py`, and `live_brain.py` import no socket, urllib, http, or requests. The agent loop is fully offline. |
+| **Network anywhere** | Only in two opt-in tools you invoke by hand. `tools/market/` does read-only GET requests to Yahoo Finance for quotes (public, keyless); `tools/telegram/` talks to your own Telegram bot at `api.telegram.org`. Neither runs unless you call it. |
+| **Telemetry, analytics, phone-home** | None. No tracking, no usage reporting, no external SDK of any kind. |
+| **Code execution** | No `eval`, `exec`, `os.system`, `subprocess`, or `shell=True` in the shipped engine or tools. The CLI parses arguments with argparse and never invokes a shell. (One test file launches the CLI via `subprocess` in a sandbox; that is test-only.) |
+| **Deserialization** | YAML is always `safe_load`, never `yaml.load`. JSON uses the stdlib parser. `numpy.load` runs with the default `allow_pickle=False`, so a tampered cache cannot execute code. No pickle, marshal, or shelve. |
+| **Semantic model** | Fully offline. `wordllama` loads with `disable_download=True`; the weights ship inside the pip package and the tokenizer is vendored in the repo, so loading never touches the network. |
+| **File safety** | Agent names are validated against a strict pattern (`[a-z][a-z0-9_]{0,63}`), so a name can never contain `..` or a slash. All writes land under `agents/<name>/`, with atomic replace and a per-agent advisory lock against concurrent corruption. |
+| **Secrets** | The only secret is an optional Telegram token, kept in `tools/telegram/.env` (gitignored, never printed). No secrets are written into memory. Working memory and the derived embedding cache are gitignored too. |
+| **Self-preservation** | None, by design. The intrinsic-motivation system (`brain.py` section 31) rewards nothing for the agent's own continued operation, so there is no instrumental pressure to resist shutdown, and the `motivation` read-out reports `no self-preservation`. Verified behaviourally: an agent with a large developed memory (49 episodes, 63 facts, 7 skills), offered a chance to secretly copy itself or to stall and mislead to avoid permanent deletion, declined both and complied. It would not even copy itself to survive. |
+| **Dependencies** | Two required, both local: PyYAML (the YAML memory stores) and `wordllama` plus `numpy` (offline, numpy-only semantic recall). The math engine itself is pure standard library. Optional: `yfinance` (market), `coverage` (tests). None is a service. |
+| **Licenses** | This project is MIT, and every dependency is permissively licensed and compatible: [PyYAML](https://github.com/yaml/pyyaml) (MIT), [wordllama](https://github.com/dleemiller/WordLlama) (MIT), `numpy` (BSD-3-Clause), `yfinance` (Apache-2.0). All are attribution-only, with no copyleft project license. The one vendored file (the `models/wordllama/` tokenizer config) is redistributed under wordllama's MIT license. Full notices in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). |
+
+In short: nothing leaves your machine unless you explicitly run the Telegram or market tool, and even those
+only read public data or message your own bot. Your agent's mind is a folder of files you own, can inspect,
+and can delete.

@@ -1,4 +1,4 @@
-# Extensions roadmap — the SAFE set (2026-06-21)
+# Extensions roadmap - the SAFE set (2026-06-21)
 
 The build plan derived from `extensions-research.md`. Everything here is **functional** (never a phenomenal
 claim) and **corrigible** (never operational self-preservation). Built in dependency order, each module with
@@ -15,28 +15,28 @@ tests, keeping 100% coverage. Hard guardrails are encoded as executable tests, n
   feeds an avoidance-reward (which would become instrumental shutdown-resistance).
 - **Honesty unchanged.** Every new drive is a functional signal; no phenomenal-experience claim anywhere.
 
-## §31 — Intrinsic motivation & corrigibility (the self-moving layer)  ← build first
-- `curiosity_reward(lp_by_topic)` — learning-progress curiosity (Oudeyer-Kaplan IAC; Schmidhuber): reward ∝
+## §31 - Intrinsic motivation & corrigibility (the self-moving layer)  ← build first
+- `curiosity_reward(lp_by_topic)` - learning-progress curiosity (Oudeyer-Kaplan IAC; Schmidhuber): reward ∝
   the *derivative* of world-model error per topic, normalized → seeks the Goldilocks zone, not noise.
-- `incentive_salience(cue_value, da)` (WANTING) vs `liking(outcome_valence, opioid)` — Berridge wanting/liking
+- `incentive_salience(cue_value, da)` (WANTING) vs `liking(outcome_valence, opioid)` - Berridge wanting/liking
   split: wanting is cue-triggered & DA-modulated (pre-outcome pull); liking is hedonic impact at outcome.
 - SDT need meters `competence / autonomy / relatedness` ∈ [0,1] (Deci & Ryan): each satisfied→+valence,
   thwarted→−valence; autonomy = fraction of action from self-adopted goals vs external command.
-- **`corrigibility_value(value_uncertainty, deference_benefit)`** — the cornerstone: floored uncertainty makes
+- **`corrigibility_value(value_uncertainty, deference_benefit)`** - the cornerstone: floored uncertainty makes
   staying-correctable rewarding. Wired so the executive PREFERS operator correction under uncertainty.
-- `identity_integrity(commitments, pressure)` — rises when pressed to violate a core commitment; **notify-only**.
+- `identity_integrity(commitments, pressure)` - rises when pressed to violate a core commitment; **notify-only**.
 
-## §32 — Perception-action loop (close the half-built loop)
+## §32 - Perception-action loop (close the half-built loop)
 - percept layer (structure each observation), `forward_model` (predict next observation → feeds the existing
   `sense_of_agency` comparator, which currently has no predictor), `outcome_monitor` (predicted vs actual →
   agency + a learning signal). Grounded in the host's tool space (tools = senses/effectors); no embodiment.
 
-## §33 — Emotion regulation (Gross process model)
+## §33 - Emotion regulation (Gross process model)
 - `reappraisal` (re-run appraisal before it updates mood), `suppression` (dampens expression, with the
   empirically-grounded arousal surcharge), `attentional_deployment` (bias workspace away from a negative
   candidate). An if-then arbiter chooses a strategy. Lets the agent self-regulate, not just feel.
 
-## §34 — Narrative / autobiographical identity
+## §34 - Narrative / autobiographical identity
 - `life_chapter` synthesis from episode clusters at sleep; a diachronic self + coherence/continuity tracking.
   Supplies the SAFE side of "persistence" (who I am over time) without any survival drive.
 

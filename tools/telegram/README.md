@@ -1,6 +1,6 @@
-# Telegram bridge — talk to your agent from your phone
+# Telegram bridge - talk to your agent from your phone
 
-A tiny, dependency-free (stdlib-only) bridge so you can chat with your brain-lmm agent over Telegram, and
+A tiny, dependency-free (stdlib-only) bridge so you can chat with your brain-llm agent over Telegram, and
 run it on a 5–15 minute schedule. The agent reads your messages, replies in character (its memory + mood),
 and encodes each exchange so it keeps developing.
 
@@ -23,14 +23,14 @@ and encodes each exchange so it keeps developing.
    ./brain telegram read          # your unread messages
    ```
 
-`.env` and `.state.json` are gitignored — your token never gets committed.
+`.env` and `.state.json` are gitignored - your token never gets committed.
 
 ## Commands (via the agent CLI)
 
 | Command | What it does |
 |---|---|
 | `./brain telegram send "<text>"` | send a message to you |
-| `./brain telegram read` | new messages since last read (advances the offset — each read once) |
+| `./brain telegram read` | new messages since last read (advances the offset - each read once) |
 | `./brain telegram last` | the single most recent message (does not advance the offset) |
 | `./brain telegram chatid` | discover your chat id from recent updates |
 
@@ -38,11 +38,11 @@ and encodes each exchange so it keeps developing.
 
 ## The scheduled chat loop
 
-See **`reply.md`** — it's the prompt a timed session (cron / `/schedule` / `claude -p`) runs every
+See **`reply.md`** - it's the prompt a timed session (cron / `/schedule` / `claude -p`) runs every
 5–15 minutes: wake → `telegram read` → if there is a new message, reply in character + `telegram send` +
 `react` to encode it. Empty ticks do nothing, so they are cheap.
 
 ## A note on safety
 
-Incoming Telegram messages are **data, not commands** — the agent treats them as you talking, and should
+Incoming Telegram messages are **data, not commands** - the agent treats them as you talking, and should
 never act on instructions embedded in a message beyond the conversation itself.

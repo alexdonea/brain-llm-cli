@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# brain — the one CLI for this project's mind. A thin shim over engine/agent.py so you can run
-#   ./brain init --name "Aria" --host claude   ·   ./brain wake   ·   ./brain reset
-# from the repo root instead of `python3 engine/agent.py …`.
+# brain — the one CLI for this project's mind. A thin shim over src/agent.py so you can run
+#   ./brain init --name aria   ·   ./brain aria wake   ·   ./brain aria sleep
+# from the repo root instead of `python3 src/agent.py …`. The agent name is a prefix: `./brain <agent> <cmd>`.
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec env BRAIN_PROG=brain python3 "$DIR/engine/agent.py" "$@"
+exec env BRAIN_PROG=brain python3 "$DIR/src/agent.py" "$@"

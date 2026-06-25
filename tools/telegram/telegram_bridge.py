@@ -1,5 +1,5 @@
 """
-telegram_bridge.py — a tiny, dependency-free Telegram bridge so you can talk to your agent over Telegram.
+telegram_bridge.py - a tiny, dependency-free Telegram bridge so you can talk to your agent over Telegram.
 Uses ONLY the standard library (urllib). Put your bot token + chat id in tools/telegram/.env (copy from
 .env.example). The token is never printed.
 
@@ -37,8 +37,8 @@ ENV_CANDIDATES = [ENV_FILE,                                  # tools/telegram/.e
 
 
 def load_env():
-    """Read the .env (KEY=value lines) from the first place it lives — tools/telegram/.env, tools/.env, or
-    the repo root — first non-empty value wins; real environment variables override all."""
+    """Read the .env (KEY=value lines) from the first place it lives - tools/telegram/.env, tools/.env, or
+    the repo root - first non-empty value wins; real environment variables override all."""
     cfg = {}
     for path in ENV_CANDIDATES:
         if os.path.exists(path):
@@ -71,7 +71,7 @@ def _call(method, params, token):
             res = json.load(r)
         except json.JSONDecodeError as e:                   # non-JSON body (proxy/gateway page) → surface, don't pretend empty
             raise SystemExit(f"Telegram returned a non-JSON response: {e}")
-    if res.get("ok") is False:                              # HTTP 200 but logical error (401/revoked token/bad chat id) — token NOT echoed
+    if res.get("ok") is False:                              # HTTP 200 but logical error (401/revoked token/bad chat id) - token NOT echoed
         raise SystemExit(f"Telegram API error {res.get('error_code')}: {res.get('description')}")
     return res
 
@@ -107,7 +107,7 @@ def read_updates(cfg=None, advance=True):
     """New text messages since the last read; advances the stored offset so each message is read once.
 
     ACK BOUNDARY: with advance=True the offset is persisted here, *before* the caller consumes the returned
-    list — so a crash mid-handling silently drops those updates. For at-least-once delivery, call with
+    list - so a crash mid-handling silently drops those updates. For at-least-once delivery, call with
     advance=False, handle the messages, then commit the cursor with commit_offset(msgs); Telegram re-delivers
     anything not acked. The default stays advance=True so the one-shot CLI `read` keeps its read-once behavior."""
     cfg = cfg or load_env()
@@ -174,7 +174,7 @@ def main(argv):
         elif action == "chatid":
             ids = discover_chat_id()
             print("\n".join(f"chat_id={cid}  ({name})" for cid, name in ids) or
-                  "(no updates — message your bot once, then retry)")
+                  "(no updates - message your bot once, then retry)")
         else:
             print("usage: send <text> | read | last | chatid")
     except urllib.error.URLError as e:

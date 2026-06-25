@@ -1,0 +1,15 @@
+# Coverage config — what counts toward "100%".
+# The __main__ demo blocks at the end of brain.py / runtime.py are runnable documentation, not unit
+# logic, so they are excluded (standard practice). Everything else — every function and fallback
+# branch — is expected to be covered by the unit suites.
+[run]
+omit =
+    test_*.py
+
+[report]
+show_missing = True
+skip_covered = False
+exclude_also =
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    def __repr__
