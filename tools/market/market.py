@@ -45,7 +45,7 @@ def _http_json(url):
         try:
             return json.load(r)
         except json.JSONDecodeError as e:                   # Yahoo HTML rate-limit/gateway 200 → treat as no data
-            raise urllib.error.URLError(f"non-JSON response: {e}")
+            raise OSError(f"non-JSON response: {e}")
 
 
 def _fmt_date(ts, interval):
@@ -56,7 +56,11 @@ def _fmt_date(ts, interval):
 
 def yahoo_chart(ticker, period="1y", interval="1d"):
     """Stdlib Yahoo chart call -> (meta dict, [bar,...]); each bar = date/open/high/low/close/volume."""
-    url = CHART.format(t=urllib.parse.quote(ticker), r=period, i=interval)
+    # url-encode every interpolated value with safe='' so even '/' is percent-encoded - a crafted ticker like
+    # "../quote/EVIL" then can't rewrite the URL PATH, and a stray space/&/# can't malform the query. Full
+    # defense-in-depth on the outbound Yahoo URL (plain quote() leaves '/' unescaped, which is the gap this closes).
+    url = CHART.format(t=urllib.parse.quote(str(ticker), safe=""), r=urllib.parse.quote(str(period), safe=""),
+                       i=urllib.parse.quote(str(interval), safe=""))
     res = _http_json(url)
     results = (res.get("chart") or {}).get("result") or []
     if not results:
@@ -83,7 +87,7 @@ def quote(ticker):
     """Latest (delayed) snapshot for one ticker, from the chart metadata. Returns a dict or None."""
     try:
         meta, _ = yahoo_chart(ticker, "1d", "1m")
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
         meta = None
     if not meta:                                           # last-ditch fallback via yfinance, if present
         yf = _yf()
@@ -93,7 +97,7 @@ def quote(ticker):
                 price, prev = fi.get("lastPrice") or fi.get("last_price"), fi.get("previousClose") or fi.get("previous_close")
                 return _quote_obj(ticker, ticker, price, prev, fi.get("dayHigh"), fi.get("dayLow"),
                                   fi.get("lastVolume"), fi.get("currency"), fi.get("exchange"))
-            except (urllib.error.URLError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+            except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
                 return None
         return None
     price = meta.get("regularMarketPrice")
@@ -123,11 +127,11 @@ def history(ticker, period="1y", interval="1d"):
                              "low": _f(row.get("Low")), "close": _f(row.get("Close")), "volume": _f(row.get("Volume"))})
             if bars:
                 return {"symbol": ticker}, bars
-        except (urllib.error.URLError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
             pass
     try:
         return yahoo_chart(ticker, period, interval)
-    except urllib.error.URLError:                          # offline / Yahoo down → graceful empty, no crash
+    except OSError:                          # offline / Yahoo down → graceful empty, no crash
         return None, []
 
 
@@ -151,9 +155,12 @@ def info(ticker):
                         "wk52_high": d.get("fiftyTwoWeekHigh"), "wk52_low": d.get("fiftyTwoWeekLow"),
                         "currency": d.get("currency"), "country": d.get("country"), "website": d.get("website"),
                         "summary": (d.get("longBusinessSummary") or "")[:400], "rich": True}
-        except (urllib.error.URLError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
             pass
-    meta, _ = yahoo_chart(ticker, "1d", "1d")
+    try:
+        meta, _ = yahoo_chart(ticker, "1d", "1d")
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None                                            # offline / timeout / bad payload → graceful, like quote()/history()
     if not meta:
         return None
     return {"symbol": meta.get("symbol", ticker), "name": meta.get("longName") or meta.get("shortName") or ticker,
@@ -176,7 +183,7 @@ def news(ticker, limit=6):
             if title:
                 out.append({"title": title, "publisher": pub or "", "link": link or ""})
         return out
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
         return []
 
 
@@ -298,7 +305,7 @@ def main(argv):
             print(fmt_news(news(tickers[0]), tickers[0]))
         else:
             print(f"unknown action: {action}")
-    except urllib.error.URLError as e:
+    except OSError as e:
         raise SystemExit(f"Market request failed (network/Yahoo): {e}")
     except IndexError:
         raise SystemExit("need a ticker, e.g. market quote AAPL")

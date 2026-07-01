@@ -3,4 +3,8 @@
 #   ./brain init --name aria   ·   ./brain aria wake   ·   ./brain aria sleep
 # from the repo root instead of `python3 src/agent.py …`. The agent name is a prefix: `./brain <agent> <cmd>`.
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec env BRAIN_PROG=brain python3 "$DIR/src/agent.py" "$@"
+# Prefer the project venv (full deps incl. wordllama → semantic recall ON by DEFAULT); fall back to the
+# system python3 if it isn't there (recall then degrades to lexical - nothing breaks). Run ./install.sh or
+# `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt` to create it.
+PY="$DIR/.venv/bin/python"; [ -x "$PY" ] || PY="python3"
+exec env BRAIN_PROG=brain "$PY" "$DIR/src/agent.py" "$@"

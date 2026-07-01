@@ -1,0 +1,4 @@
+# Procedural memory - distilled how-to playbooks per domain (basal ganglia / cerebellum). Item:
+# {id, domain, steps, attempts, successes, strength}. DISTILLED during sleep() from clusters of same-domain
+# success episodes; strength = power law of practice (brain.py practice_strength). Fresh brain: none yet.
+playbooks: []

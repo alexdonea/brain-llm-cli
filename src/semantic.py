@@ -124,6 +124,14 @@ def _fp_of(hashes):
     return h.hexdigest()
 
 
+def _matrix_fp(M):
+    """Fingerprint of the embedding matrix bytes. Stored beside the ids so load_index can detect a .npy /
+    .ids.json DESYNC - a cache whose vectors no longer match its ids (one file restored/corrupted out of
+    step with the other), which a bare len(ids)==rows check would silently accept and serve wrong vectors."""
+    import numpy as np
+    return hashlib.sha1(np.ascontiguousarray(M).tobytes()).hexdigest()[:16]
+
+
 def load_index(mem_root, kind="episodic"):
     """Return (ids, matrix) from the on-disk cache, or None if absent/corrupt/misaligned (or numpy missing)."""
     npy, idsf = cache_paths(mem_root, kind)
@@ -131,10 +139,15 @@ def load_index(mem_root, kind="episodic"):
         return None                                                # no cache: degrade before touching numpy
     try:
         import numpy as np                                         # guarded: a numpy-less host still degrades to None
-        meta = _json.load(open(idsf, encoding="utf-8"))
+        with open(idsf, encoding="utf-8") as f:
+            meta = _json.load(f)
         ids = meta["ids"] if isinstance(meta, dict) else meta      # tolerate a legacy bare-list file
         M = np.load(npy)
-        return (ids, M) if len(ids) == M.shape[0] else None
+        if len(ids) != M.shape[0]:
+            return None
+        if isinstance(meta, dict) and meta.get("m") and _matrix_fp(M) != meta["m"]:
+            return None                                            # .npy / .ids.json desync (same length, different bytes)
+        return ids, M
     except Exception:
         return None
 
@@ -148,7 +161,7 @@ def _write_cache(mem_root, kind, ids, hashes, M):
     np.save(npy + ".tmp.npy", M); os.replace(npy + ".tmp.npy", npy)
     tmp = idsf + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        _json.dump({"fp": _fp_of(hashes), "ids": list(ids), "h": list(hashes)}, f)
+        _json.dump({"fp": _fp_of(hashes), "ids": list(ids), "h": list(hashes), "m": _matrix_fp(M)}, f)
     os.replace(tmp, idsf)
 
 
@@ -181,7 +194,8 @@ def ensure_index(mem_root, items, home, kind="episodic"):
     meta = None
     if cached is not None:
         try:
-            meta = _json.load(open(idsf, encoding="utf-8"))
+            with open(idsf, encoding="utf-8") as f:
+                meta = _json.load(f)
         except Exception:
             meta = None
     # fast path - the store is unchanged since the cache was written
@@ -215,15 +229,15 @@ def ensure_index(mem_root, items, home, kind="episodic"):
 
 
 def dense_relevance(query, ids, matrix, home):
-    """{episode_id -> relevance in [0,1]} from cosine similarity, min-max normalized across the candidate
-    set so the dense term keeps full dynamic range inside brain.retrieval_score's weighted-linear sum."""
-    import numpy as np
+    """{episode_id -> relevance in [0,1]} from ABSOLUTE cosine similarity mapped (cos+1)/2. Absolute, NOT
+    per-query min-max: an off-topic query then scores lower instead of having its best-of-a-bad-batch candidate
+    inflated to 1.0, so the score keeps a usable floor - while preserving the same rank order (the map is
+    monotonic in cosine). NOTE: for a static token embedder the on-/off-topic separation is SOFT (off-topic best
+    ~0.55 vs on-topic ~0.65), so treat the value as a ranking signal, not a calibrated confidence threshold."""
     if matrix.shape[0] == 0:
         return {}
-    sims = matrix @ embed([query], home)[0]          # both sides L2-normalized -> cosine
-    lo, hi = float(sims.min()), float(sims.max())
-    norm = (sims - lo) / (hi - lo) if (hi - lo) > 1e-9 else np.full_like(sims, 0.5)
-    return {i: float(x) for i, x in zip(ids, norm)}
+    sims = matrix @ embed([query], home)[0]          # both sides L2-normalized -> cosine in [-1, 1]
+    return {i: float((c + 1.0) / 2.0) for i, c in zip(ids, sims)}
 
 
 if __name__ == "__main__":  # quick self-test against the real brain (run with a venv that has wordllama)
@@ -232,7 +246,8 @@ if __name__ == "__main__":  # quick self-test against the real brain (run with a
     agent = sys.argv[2] if len(sys.argv) > 2 else "sage"
     print("available:", available(), "| model dir:", model_dir(home), "| ready:", is_ready(home))
     ep = os.path.join(home, "agents", agent, "memory", "episodic", "events.jsonl")
-    tasks = [_json.loads(l)["task"] for l in open(ep)]
+    with open(ep, encoding="utf-8") as f:
+        tasks = [_json.loads(l)["task"] for l in f]
     t = time.time(); M = embed(tasks, home); print(f"embedded {len(tasks)} episodes in {(time.time()-t)*1000:.0f}ms, dim={M.shape[1]}")
     for q in ["fear of losing money", "an option's sensitivity to time decay"]:
         s = relevance_scores(q, M, home)

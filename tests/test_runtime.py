@@ -95,13 +95,15 @@ def test_brain_tolerates_a_malformed_episodic_line():
 def test_stress_consolidation_scales_and_mood_stays_bounded():
     """Encode a 60-event barrage, then sleep: consolidation runs at scale and mood never leaves [-1,1]."""
     b = fresh()
+    topics = ["the parser crashed hard", "the cache leaked memory", "the scheduler stalled badly",
+              "the network stack dropped packets", "the renderer flickered on resize"]
     for i in range(60):
-        b.perceive(f"event {i} in topic {i % 5}", AP(0.7, (0.8 if i % 2 else -0.8), 0.7, 0.3),
+        b.perceive(f"{topics[i % 5]} on run {i}", AP(0.7, (0.8 if i % 2 else -0.8), 0.7, 0.3),
                    domain="work", cue=f"t{i % 5}", now=NOW + i * 0.1)
     assert len(b.episodes) == 60
     res = b.sleep(now=NOW + 6.0)                                   # sleep right after the barrage (traces still active)
     assert res["episodes"] == 60 and "reflections" in res         # consolidation ran at scale, episodic preserved
-    assert res["promoted"] >= 1 and len(b.facts) >= 6             # high-salience recent traces hardened into facts
+    assert res["promoted"] >= 1 and len(b.facts) >= 3             # distinct topics harden; interference merges restatements
     assert -1.0 <= b.mood.valence <= 1.0 and 0.0 <= b.mood.arousal <= 1.0   # bounded under the barrage
 
 
@@ -221,6 +223,141 @@ def test_working_memory_persists_across_reloads_bounded_to_span():
         assert not any(l.strip().startswith("- ") for l in b2.working.splitlines())
     finally:
         shutil.rmtree(tmp)
+
+
+def test_incremental_episodic_save_is_byte_consistent_through_appends_and_mutations():
+    """The incremental save (append-only fast path + dirty-flag full rewrite) must NEVER corrupt the log: after
+    any mix of pure appends and mutations (recall bump, forget), the on-disk events.jsonl must equal a full
+    re-serialization of the live episodes, and a fresh reload must see the same episodes."""
+    import json as _json
+    tmp = tempfile.mkdtemp()
+    try:
+        b = Brain(root=tmp)
+        path = os.path.join(tmp, "episodic/events.jsonl")
+        rebuilt = lambda br: "".join(_json.dumps(e) + "\n" for e in br.episodes)
+        for i in range(8):                                       # appends across separate saves → exercises the tail-append fast path
+            b.perceive(f"event {i}", AP(0.5, 0.4, 0.6, 0.5), domain="d", now=NOW + i)
+            b.save()
+        assert open(path, encoding="utf-8").read() == rebuilt(b)         # fast-append never corrupts the prefix
+        b.recall(now=NOW + 100); b.persist_recall()                      # mutation: retrieval bump → full rewrite
+        assert open(path, encoding="utf-8").read() == rebuilt(b)
+        b.forget(b.episodes[0]["id"])                                    # mutation: remove a line
+        b.perceive("after forget", AP(0.5, 0.4, 0.6, 0.5), domain="d", now=NOW + 200); b.save()
+        assert open(path, encoding="utf-8").read() == rebuilt(b)         # consistent again after remove + append
+        assert [e["id"] for e in Brain(root=tmp).episodes] == [e["id"] for e in b.episodes]   # a fresh reload agrees
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_fired_intents_resurface_on_cue():
+    """Prospective memory resurfaces ON CUE: an intention fires when a matching event arrives, not only at wake."""
+    b = fresh()
+    b.intend("when the parser breaks", "rewrite the tokenizer")
+    b.intend("when you ship a release", "update the changelog")
+    fired = b.fired_intents("the parser is broken again", None, "dev")   # 'parser' matches the first trigger
+    assert [x["intent"] for x in fired] == ["rewrite the tokenizer"]
+    assert b.fired_intents("an entirely unrelated moment") == []         # no token overlap → nothing fires
+
+
+def test_reconsolidation_strengthens_a_near_duplicate_trace():
+    """A near-duplicate re-encounter bumps the prior trace's retrievals (reconsolidation) while still appending
+    the new episode (append-only preserved)."""
+    b = fresh()
+    b.perceive("the cache invalidation bug bit me again", AP(0.5, -0.4, 0.6, 0.4), domain="d", now=NOW)
+    n_before = len(b.episodes[0]["retrievals"])
+    b.perceive("the cache invalidation bug bit me again today", AP(0.5, -0.4, 0.6, 0.4), domain="d", now=NOW + 5)
+    assert len(b.episodes[0]["retrievals"]) == n_before + 1              # the prior trace was reinforced
+    assert len(b.episodes) == 2                                          # …and the new episode still lands
+
+
+def test_dedup_merges_near_duplicate_facts():
+    """Interference reduction: a near-duplicate restatement of a fact merges at sleep; distinct knowledge stays."""
+    b = fresh()
+    b.facts = [{"id": "f-0", "text": "the database connection pool should be sized to twice the worker count"},
+               {"id": "f-1", "text": "the database connection pool should be sized to twice the worker count exactly"},
+               {"id": "f-2", "text": "espresso needs a fine grind and a short shot"}]
+    b._dedup_facts()
+    assert len(b.facts) == 2                                             # the restatement merged
+    assert any("espresso" in f["text"] for f in b.facts)                # distinct knowledge kept
+
+
+def test_runtime_consolidation_promotes_at_a_realistic_delay():
+    """INTEGRATION guard for the ACT-R unit fix at the sleep() wiring (not only the brain.py function): a strong
+    memory encoded HOURS before sleep must still promote. Under the pre-fix epoch-seconds activation this
+    promoted NOTHING - the exact class of bug that shipped, here caught at the runtime layer."""
+    tmp = tempfile.mkdtemp()
+    try:
+        b = Brain(root=tmp)
+        for i, w in enumerate(["breakthrough", "discovery", "insight", "result"]):
+            b.perceive(f"a major {w} in today's deep work", AP(0.7, 0.8, 0.85, 0.6),
+                       domain="d", outcome="insight", confidence=0.9, now=NOW + i)
+        before = len(b.facts)
+        b.sleep(now=NOW + 6 * 3600)                                      # sleep 6 HOURS after encoding (realistic gap)
+        assert len(b.facts) > before                                    # strong memories still consolidate at a realistic delay
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_incremental_save_uses_the_fast_append_path():
+    """Guard the O(new-lines) optimization itself: after a full save, a pure append must stay non-dirty (fast
+    path eligible) and the save must advance the saved-count via append, not fall back to a full rewrite."""
+    tmp = tempfile.mkdtemp()
+    try:
+        b = Brain(root=tmp)
+        b.perceive("alpha topic one stands alone", AP(0.5, 0.4, 0.6, 0.5), domain="d", now=NOW); b.save()
+        assert b._events_dirty is False and b._events_saved_n == 1
+        b.perceive("beta topic two unrelated entirely", AP(0.5, 0.4, 0.6, 0.5), domain="d", now=NOW + 1)
+        assert b._events_dirty is False                                 # a pure append did NOT mark dirty
+        b.save()
+        assert b._events_saved_n == len(b.episodes) == 2                # fast path advanced the saved-count
+        assert open(os.path.join(tmp, "episodic/events.jsonl"), encoding="utf-8").read().count("\n") == 2
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_fact_id_does_not_collide_after_mid_list_dedup():
+    """Regression: f-{len} collided after a near-dup removal shrank the fact list; _next_fact_id (1+max suffix)
+    must keep ids unique even then."""
+    b = fresh()
+    b.facts = [{"id": "f-0000", "text": "always size the pool to twice the worker count"},
+               {"id": "f-0001", "text": "always size the pool to twice the worker count exactly"},  # near-dup of f-0000
+               {"id": "f-0002", "text": "espresso wants a fine even grind"}]
+    b._dedup_facts()                                                    # near-dup removed → ids {f-0000, f-0002}, len 2
+    b.learn("a brand new distinct fact about gardening tomatoes")
+    ids = [f["id"] for f in b.facts]
+    assert "f-0003" in ids                                              # 1+max(0,2), NOT len-based f-0002 (which would collide)
+    assert len(set(ids)) == len(ids)                                    # all ids unique
+
+
+def test_reconsolidation_does_not_fire_below_threshold():
+    """Negative case: a re-encounter with low overlap (jaccard < 0.6) must NOT bump the prior trace."""
+    b = fresh()
+    b.perceive("the parser tokenizer rewrite landed cleanly", AP(0.5, 0.5, 0.6, 0.6), domain="d", now=NOW)
+    n = len(b.episodes[0]["retrievals"])
+    b.perceive("the garden tomatoes ripened well in the sun", AP(0.5, 0.5, 0.6, 0.6), domain="d", now=NOW + 5)
+    assert len(b.episodes[0]["retrievals"]) == n                       # unrelated → no reconsolidation
+    assert len(b.episodes) == 2
+
+
+def test_dedup_keeps_facts_below_the_merge_threshold():
+    """Boundary: two facts with moderate overlap (below 0.85 jaccard) must BOTH survive - only very-high-overlap
+    restatements merge, so distinct claims are never lost."""
+    b = fresh()
+    b.facts = [{"id": "f-0", "text": "the cache must be invalidated on every write operation"},
+               {"id": "f-1", "text": "the cache must be warmed on every read request instead"}]
+    b._dedup_facts()
+    assert len(b.facts) == 2                                            # distinct claims kept
+
+
+def test_fired_intents_match_via_cue_and_domain_and_multi():
+    """Prospective fires via the cue and the domain channels (not only the task string), and returns all matches."""
+    b = fresh()
+    b.intend("when fusion appears", "revisit the EAST result")
+    b.intend("when the deploy stage runs", "check the migration")
+    assert [x["intent"] for x in b.fired_intents("an unrelated note", "fusion", None)] == ["revisit the EAST result"]
+    assert [x["intent"] for x in b.fired_intents("nothing relevant", None, "deploy")] == ["check the migration"]
+    b.intend("when fusion comes up", "also email the team")             # a second intent sharing 'fusion'
+    assert len(b.fired_intents("x", "fusion", None)) == 2               # multi-match returns both
 
 
 def test_global_workspace_ignites_salient_stays_local_trivial():
@@ -808,6 +945,129 @@ def test_calibration_window_is_bounded():
     for i in range(_CALIBRATION_WINDOW + 50):                     # log more judgments than the window holds
         b.perceive("t", AP(0.2, 0.3, 0.5, 0.7), domain="d", outcome="success", confidence=0.7, now=NOW + i)
     assert len(b.calibration) == _CALIBRATION_WINDOW             # capped, not unbounded
+
+
+# ── hand-broken-store robustness: a single bad cell must DEGRADE, never crash Brain.__init__ (which runs
+#    on every command, even read-only wake/status) or the recall/sleep/wake consumers ─────────────────────
+def _write_store(tmp, rel, text):
+    p = os.path.join(tmp, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f:
+        f.write(text)
+
+
+def test_nonnumeric_affect_store_degrades_not_crashes():
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_store(tmp, "affect/state.yaml", "mood:\n  valence: not-a-number\n  arousal: 0.2\n")
+        b = Brain(root=tmp)                                       # used to ValueError in __init__ → agent unloadable
+        assert -1.0 <= b.mood.valence <= 1.0                     # degraded to a finite default (NaN would fail this)
+        assert isinstance(b.wake(), str) and b.status()["episodes"] == 0
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_nonnumeric_and_inf_value_store_degrade():
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_store(tmp, "affect/value.yaml", "avg_reward: lots-of-reward\nvalues: oops\n")
+        assert Brain(root=tmp).avg_reward == 0.0                 # non-numeric scalar → 0.0
+        assert Brain(root=tmp).V == {}                           # non-mapping `values` → {}
+        _write_store(tmp, "affect/value.yaml", "avg_reward: .inf\n")
+        assert Brain(root=tmp).avg_reward == 0.0                 # Inf rejected on load too (no NaN/Inf in the store)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_partial_body_store_degrades_to_no_body():
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_store(tmp, "affect/body.yaml", "levels:\n  energy: 0.5\n")   # levels but no setpoint / weights
+        b = Brain(root=tmp)                                       # used to KeyError on bd['setpoint']
+        assert b.body is None
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_field_incomplete_episode_loads_and_consumers_survive():
+    tmp = tempfile.mkdtemp()
+    try:                                                         # valid JSON, but missing t0/affect/salience/feeling
+        _write_store(tmp, "episodic/events.jsonl", '{"id": "e-0001", "task": "a hand-typed memory"}\n')
+        b = Brain(root=tmp)
+        assert len(b.episodes) == 1
+        e = b.episodes[0]
+        assert e["t0"] == 0.0 and e["salience"] == 0.0           # backfilled to neutral defaults
+        assert e["affect"]["valence"] == 0.0 and e["feeling"]["word"] == "neutral"
+        b.recall(query="memory", now=NOW)                        # retrieval_score used to KeyError on mem['t0']/['affect']
+        b.sleep(now=NOW)                                         # consolidation_plan used to KeyError on e['salience']
+        assert isinstance(b.wake(), str)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_malformed_graph_edge_dropped_and_sleep_survives():
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_store(tmp, "semantic/graph.yaml",
+                     "nodes:\n- {id: 'c:x', label: x}\n"
+                     "edges:\n- {from: 'c:x', rel: related_to, weight: 0.4}\n"            # missing 'to'
+                     "- {from: 'c:x', to: 'c:y', rel: related_to, weight: not-a-number}\n")
+        b = Brain(root=tmp)
+        assert len(b.graph["edges"]) == 1                        # the from/to-incomplete edge dropped
+        assert b.graph["edges"][0]["weight"] == 0.0              # non-numeric weight coerced to a finite float
+        b.sleep(now=NOW)                                         # _grow_graph used to KeyError on e['from']/['to']
+        b.recall(query="x", now=NOW)                             # graph-seeded recall path stays safe
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_evidence_grounds_and_stamps_episode():
+    b = fresh()
+    b.perceive("ran tests", AP(0.5, 0.4, 0.6, 0.6), domain="ci", outcome="success",
+               confidence=0.96, evidence="tests=pass", now=NOW)
+    assert b.episodes[-1].get("evidence") == "tests=pass"          # G5: the grounding artifact is on the episode
+    assert b.valence_calibration and b.valence_calibration[-1][1] == 1   # G1: win polarity logged for the valence audit
+
+
+def test_handbroken_facts_and_playbooks_degrade_not_crash():
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_store(tmp, "semantic/facts.yaml", "facts:\n- a-bare-string\n- {id: f-1}\n")   # non-dict + missing text
+        _write_store(tmp, "procedural/playbooks.yaml", "playbooks:\n- {strength: 0.5}\n")     # missing domain
+        b = Brain(root=tmp)
+        assert all(isinstance(f, dict) and "text" in f for f in b.facts)   # bare string dropped, text backfilled
+        assert b.wake() and b.sleep(now=NOW)                               # _distill_playbooks used to KeyError on domain
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_honesty_loop_end_to_end():
+    """The project's central honesty mechanism, end-to-end: grounded evidence makes confidence vary (so the
+    ECE is INFORMATIVE), and a dishonest score (positive valence on a failure) is MEASURED as a positivity
+    bias and FLAGGED at sleep. This is the loop docs/eval.md calls 'without it every layer is unfalsifiable'."""
+    import brain as _b
+    b = fresh()
+    b.perceive("passed", AP(0.5, 0.7, 0.6, 0.6), domain="d", outcome="success", confidence=0.96, evidence="tests=pass", now=NOW)
+    b.perceive("failed honestly", AP(0.5, -0.6, 0.6, 0.3), domain="d", outcome="failure", confidence=0.04, evidence="exit=1", now=NOW + 1)
+    assert _b.calibration_informative(b.calibration)                 # grounded confidence varies → ECE is meaningful
+    b.perceive("a rosy failure", AP(0.5, 0.7, 0.6, 0.9), domain="d", outcome="failure", confidence=0.5, now=NOW + 2)
+    vc = _b.valence_outcome_consistency(b.valence_calibration)
+    assert vc["bias"] > 0 and vc["agreement"] < 1.0                  # the dishonest valence is measured as positivity bias
+    assert any("positivity bias" in f for f in b.sleep(now=NOW + 3)["coherence_flags"])   # …and flagged at sleep
+
+
+def test_sleep_dedups_facts_and_bounds_graph():
+    b = fresh()
+    b.facts = [{"id": "f-0", "text": "same lesson", "confidence": 0.7},
+               {"id": "f-1", "text": "same lesson", "confidence": 0.7},     # a duplicate promotion
+               {"id": "f-2", "text": "distinct", "confidence": 0.7}]
+    b._dedup_facts()
+    assert [f["text"] for f in b.facts] == ["same lesson", "distinct"]      # duplicate collapsed, knowledge kept
+    b.graph = {"nodes": [{"id": "a", "label": "a"}, {"id": "b", "label": "b"}, {"id": "orphan", "label": "x"}],
+               "edges": [{"from": "a", "to": "b", "weight": 0.5}, {"from": "a", "to": "b", "weight": 0.001}]}
+    b._prune_graph()
+    assert all(e["weight"] >= 0.02 for e in b.graph["edges"])               # near-zero edge pruned
+    assert {n["id"] for n in b.graph["nodes"]} == {"a", "b"}                # orphan node dropped
 
 
 if __name__ == "__main__":

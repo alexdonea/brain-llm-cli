@@ -5,15 +5,23 @@
 #
 # Licenses (all permissive, compatible with this project's MIT license):
 #   PyYAML    MIT          https://github.com/yaml/pyyaml
-#   wordllama MIT          https://github.com/dleemiller/WordLlama   (pulls numpy, BSD-3-Clause)
+#   wordllama MIT          https://github.com/dleemiller/WordLlama
+#   numpy     BSD-3-Clause https://github.com/numpy/numpy            (used directly by src/semantic.py)
 #   yfinance  Apache-2.0   https://github.com/ranaroussi/yfinance    (optional)
+#
+# Versions are upper-bounded to the tested majors so a future ABI/API break can't silently degrade recall.
+# For byte-reproducible installs, generate a hash-pinned lockfile: `pip-compile --generate-hashes`.
 
-PyYAML>=6.0          # read/write the human-editable agents/<name>/memory/*.yaml stores (src/runtime.py)
-wordllama>=0.4       # local, offline semantic recall: a dense, meaning-aware term in `recall` and `know`,
+PyYAML>=6.0,<7       # read/write the human-editable agents/<name>/memory/*.yaml stores (src/runtime.py)
+wordllama>=0.4,<1    # local, offline semantic recall: a dense, meaning-aware term in `recall` and `know`,
                      #   plus `recall --search`. numpy-only inference (no PyTorch); the 16MB weights ship in
                      #   the package and the 1.8MB tokenizer is vendored at models/wordllama/, so it never
                      #   makes a network call. `pip install` pulls the full stack (about 134MB / 35 packages).
                      #   If it is ever unavailable, recall degrades to lexical matching rather than breaking.
+numpy>=1.21,<3       # imported DIRECTLY by src/semantic.py (np.asarray/linalg/load/save), not just via
+                     #   wordllama - so it is a first-class declared dep, bounded below NumPy 3.x. Without an
+                     #   explicit pin, a transitive 2.x/3.x bump could break dense recall, and the broad
+                     #   except-and-degrade in semantic.py would hide the breakage as "lexical fallback".
 
 # Optional extras (uncomment if you want them):
 # yfinance>=0.2      # richer market data (fundamentals + news) for `./brain <agent> market info|news`.

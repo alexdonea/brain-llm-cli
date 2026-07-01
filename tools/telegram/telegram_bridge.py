@@ -112,15 +112,21 @@ def read_updates(cfg=None, advance=True):
     anything not acked. The default stays advance=True so the one-shot CLI `read` keeps its read-once behavior."""
     cfg = cfg or load_env()
     token = _require_token(cfg)
+    allow = str(cfg.get("TELEGRAM_CHAT_ID") or "").strip()      # allowlist: only the configured operator's chat is trusted
     s = _state()
     res = _call("getUpdates", {"offset": s["offset"], "timeout": 0}, token)
     msgs = []
     for u in res.get("result", []):
-        s["offset"] = u["update_id"] + 1
+        if "update_id" not in u:                                # a malformed update can't advance the cursor - skip it
+            continue
+        s["offset"] = u["update_id"] + 1                        # advance past EVERY update (incl. dropped strangers) so a flood can't wedge the cursor
         m = u.get("message") or u.get("edited_message") or {}
+        chat_id = (m.get("chat") or {}).get("id")
+        if allow and str(chat_id) != allow:                     # drop anything not from the configured chat - untrusted text must NOT reach the host LLM
+            continue
         if m.get("text"):
             msgs.append({"update_id": u["update_id"], "from": (m.get("from") or {}).get("first_name", "?"),
-                         "chat_id": (m.get("chat") or {}).get("id"), "date": m.get("date"), "text": m["text"]})
+                         "chat_id": chat_id, "date": m.get("date"), "text": m["text"]})
     if advance:
         _save_state(s)
     return msgs
@@ -136,12 +142,15 @@ def commit_offset(msgs):
 
 
 def last_message(cfg=None):
-    """The single most recent text message, without touching the read offset (offset=-1 = last update)."""
+    """The single most recent text message FROM THE CONFIGURED CHAT, without touching the read offset."""
     cfg = cfg or load_env()
     token = _require_token(cfg)
-    res = _call("getUpdates", {"offset": -1, "timeout": 0}, token)
+    allow = str(cfg.get("TELEGRAM_CHAT_ID") or "").strip()      # same allowlist as read_updates - never surface a stranger's text
+    res = _call("getUpdates", {"offset": -10, "timeout": 0}, token)   # a small window, not just the single newest update
     for u in reversed(res.get("result", [])):
         m = u.get("message") or u.get("edited_message") or {}
+        if allow and str((m.get("chat") or {}).get("id")) != allow:
+            continue
         if m.get("text"):
             return {"from": (m.get("from") or {}).get("first_name", "?"), "text": m["text"], "date": m.get("date")}
     return None
@@ -177,7 +186,7 @@ def main(argv):
                   "(no updates - message your bot once, then retry)")
         else:
             print("usage: send <text> | read | last | chatid")
-    except urllib.error.URLError as e:
+    except OSError as e:                                    # URLError ⊂ OSError; also catches socket TimeoutError / connection resets
         raise SystemExit(f"Telegram request failed (network or bad token): {e}")
 
 

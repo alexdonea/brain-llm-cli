@@ -1,0 +1,13 @@
+# Prospective memory - prefrontal future intentions (trigger -> intent). Item: {id, trigger, intent,
+# created, done}. Capture with `./brain intend`; pending ones resurface at wake(). Fresh: no intentions.
+intents:
+- id: i-0000
+  trigger: when fusion comes up again
+  intent: revisit the density-free regime result and its implications
+  created: '2026-06-29'
+  done: true
+- id: i-0001
+  trigger: next wake
+  intent: revisit fusion
+  created: '2026-06-29'
+  done: false

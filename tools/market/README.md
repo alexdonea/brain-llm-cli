@@ -32,7 +32,7 @@ Market data is just data - the agent makes it *mean* something by reacting to it
 
 ```bash
 ./brain market quote AAPL                               # see the move (market is global, no agent needed)
-./brain atlas react "AAPL up 0.7% today, my paper position is green" 0.4 0.6 0.5 --domain markets --cue aapl
+./brain haiku react "AAPL up 0.7% today, my paper position is green" 0.4 0.6 0.5 --domain markets --cue aapl
 ```
 
 Gains lift mood, losses sting, surprises spike novelty - so the agent develops a real (functional) feel for

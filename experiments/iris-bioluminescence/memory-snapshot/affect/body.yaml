@@ -1,0 +1,25 @@
+# Interoception - the agent's body-budget: its OWN real viability variables (§15). Cybernetic, NOT felt.
+# drive(H) = deficit; homeostatic_reward = drive reduction (a grounded reward). Fresh brain: all healthy.
+# Driven by living: react()/perceive() deplete on effort & move signals on outcome; sleep() rests it.
+levels:
+  tokens: 0.8373759999999999
+  compute: 0.8373759999999999
+  tests_pass: 0.7600000000000001
+  tool_success: 0.7600000000000001
+  context_free: 0.8373759999999999
+  user_approval: 0.9249999999999999
+setpoint:
+  tokens: 1.0
+  compute: 1.0
+  tests_pass: 1.0
+  tool_success: 1.0
+  context_free: 1.0
+  user_approval: 1.0
+weights:
+  tokens: 1.0
+  compute: 0.5
+  tests_pass: 1.5
+  tool_success: 1.0
+  context_free: 1.0
+  user_approval: 1.5
+updated: '2026-06-29T05:03:52Z'

@@ -22,10 +22,11 @@
   "appraisal": {"novelty": 0.9, "valence": -0.7, "goal_relevance": 0.9, "control": 0.2},
   "affect":    {"valence": -0.7, "arousal": 0.86, "dominance": 0.2},   // from appraise_to_affect
   "feeling":   {"label": "fear", "word": "terror", "intensity": 0.68}, // from label_affect() - recomputable read-out
-  "confidence": 0.70,                     // from metacog_confidence() - P(this episode's judgment is correct)
+  "confidence": 0.70,                     // P(this episode's judgment is correct); derived via metacog_confidence() when --evidence is given, else the default
   "source": "observed",                   // observed | inferred | imagined  (PRM reality tag)
   "self_owned": true,                     // autonoetic tag (§23): was this the agent's own action/experience?
-  "salience": 1.50                        // from salience() - encoding strength
+  "salience": 1.50,                       // from salience() - encoding strength
+  "evidence": "tests=pass"                // OPTIONAL (--evidence): the artifact that GROUNDS the outcome+confidence, not a bare self-report
 }
 ```
 
@@ -93,7 +94,8 @@ globally available - not awareness.
 ## Metacognition / self (`.memory/self/efficacy.yaml` - prefrontal metacognition)
 ```yaml
 efficacy:    {python: 0.5}       # domain -> self-efficacy in [0,1] (update_self_efficacy)
-calibration: [[0.7, true]]       # logged [confidence, correct] pairs -> calibration_error (ECE)
+calibration: [[0.7, true]]       # logged [confidence, correct] pairs -> calibration_error (ECE) + calibration_informative()
+valence_calibration: [[-0.7, -1]]  # logged [signed_valence, outcome_polarity] pairs -> valence_outcome_consistency() honesty audit
 default_efficacy:          0.5
 min_confidence_to_promote: 0.5   # consolidation_plan(min_confidence) hallucination guard
 value_uncertainty:         0.5   # §31 corrigibility: uncertainty re the true objective (floored >0 -> always defer-positive)

@@ -1,0 +1,25 @@
+# Affect state (§17/§18). Wakes at the personality set-point (a gently positive, curious disposition).
+emotion:
+  valence: 0.252
+  arousal: 0.477
+  dominance: 0.406
+mood:
+  valence: 0.337
+  arousal: 0.273
+  dominance: 0.734
+baseline:
+  valence: 0.259
+  arousal: 0.264
+  dominance: 0.568
+neuromods:
+  ne: 0.61
+  da: 0.561034839697665
+  ach: 1.0
+  cortisol: 1.0
+  serotonin: 0.5139963424803272
+  oxytocin: 0.5800000000000001
+  ne_tonic: 0.1
+hpa:
+  crh: 0.25796533142118416
+  acth: 0.7641308404399252
+  cortisol: 1.0

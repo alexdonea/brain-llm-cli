@@ -1,0 +1,11 @@
+# Value (striatum/dopamine) + aversive channels. `values`: learned expected reward per cue (TD, §10).
+# `aversive`: learned expected harm per cue (§25), learned faster (eta_aversive). Fresh brain: nothing learned.
+gamma: 0.9
+alpha: 0.3
+values:
+  symbiosis-check: 0.499158
+  overgeneralize: -0.41596500000000003
+eta_aversive: 0.4
+aversive:
+  overgeneralize: 0.46112000000000003
+avg_reward: -0.0597

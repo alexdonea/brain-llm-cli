@@ -2,6 +2,34 @@
 
 All notable changes to this project. This release covers everything added on top of the initial project.
 
+## [Unreleased]
+
+### Added
+
+- **`config.yaml` — one optional, committed config for every safe knob.** Each value is validated and clamped,
+  so a bad entry can never put the engine into a degenerate state; absent, behaviour is byte-for-byte today's.
+  It covers the data home and program name, semantic on/off (env `BRAIN_SEMANTIC`), the `recall`/`know`/
+  `episodes` window sizes, the consolidation dials used at sleep (promote/forget thresholds, retention age, the
+  hallucination-guard confidence, calibration window, association-graph cap), the mood/emotion time-constants,
+  and the alignment invariants (exposed but clamped — corrigibility can never be configured off). Precedence:
+  CLI flag › environment variable › `config.yaml` › built-in default.
+- **`session.directives`** — operator "house rules" surfaced at the foot of every `wake`, so the host model
+  reads them before it acts.
+- **`persona.style: natural`** — present as an ordinary assistant: the memory and affect loop runs silently and
+  its internals (mood valences, salience, neuromodulators) are never shown to the user. Honesty is kept — asked
+  how it feels, it answers in plain words, not numbers.
+- **Evidence-grounded honesty.** `react … --evidence tests=pass` grounds the outcome and confidence in an
+  artifact, and the calibration audit measures whether self-reported valence actually matches outcomes.
+
+### Fixed
+
+- `know -k N` (and the `recall.know_k` default) now caps output on **every** path, not only on semantic-search
+  success — it was silently a no-op in the common no-wordllama case.
+- The Telegram bridge **allowlists inbound messages by `TELEGRAM_CHAT_ID`**: a stranger's message can no longer
+  reach the host model as "the user" (prompt-injection), while the read cursor still advances past it.
+- Market URLs url-encode `--period`/`--interval`; per-agent lock timeout resolves per call; config numeric knobs
+  are clamped on both ends.
+
 ## [0.0.2]
 
 The initial project was a "brain on disk" for AI agents: a persistent memory and affect system driven from a
@@ -15,7 +43,7 @@ multi-agent system you address by name, with meaning-aware recall and a way to w
 - One host-agnostic entry file (`AGENT-BRAIN.MD`) instead of per-vendor files.
 - Every agent is addressed by name (`brain-llm <agent> <command>`); the active-agent pointer is gone.
 - Renamed the project and command from `brain-lmm` to `brain-llm`.
-- A clean repository layout (`src/`, `tests/`, `examples/`).
+- A clean repository layout (`src/`, `tests/`).
 - A `--version` flag.
 
 ### Added
@@ -33,8 +61,6 @@ multi-agent system you address by name, with meaning-aware recall and a way to w
   is event-driven: the brain idles until a real `react` / `recall` / `know` / `sleep` happens, even from
   another terminal. No server, no browser.
 - **`--version`** flag (reports `0.0.2`).
-- **Ready-to-use capability prompts** in `examples/`: `skill-builder.md` (grow a competence by doing),
-  `toolsmith.md` (discover and classify tools into memory), and `orchestrator.md` (lead other agents).
 - **Worked-experiment documentation and figures** in the README and `docs/img/`: token budget at scale, the
   emotion-to-action map, a felt-loss-then-debrief session, a skills-and-tools-from-memory run, and one agent
   orchestrating another.
@@ -51,8 +77,8 @@ multi-agent system you address by name, with meaning-aware recall and a way to w
   in the program. The per-vendor `CLAUDE.md` and `GEMINI.md` files were removed.
 - **Agent name as a prefix.** Commands are `brain-llm <agent> <command>` (or `--agent <name>`). Names are
   strict snake_case, validated so they can never traverse a path.
-- **Repository layout.** Code moved to `src/`, tests to `tests/` (with a `conftest.py`), the data schema to
-  `docs/schema.md`, and example prompts to `examples/`. Run the suite with `python3 -m pytest tests`.
+- **Repository layout.** Code moved to `src/`, tests to `tests/` (with a `conftest.py`), and the data schema to
+  `docs/schema.md`. Run the suite with `python3 -m pytest tests`.
 - **Engine refinements.** Honest wiring of the affect read-outs (named-feeling circuits, reality-weighting,
   self-reference salience, the RPE mood nudge), a corrected flashbulb clamp, and robustness fixes (a corrupt
   `world.yaml` now degrades gracefully instead of crashing).
