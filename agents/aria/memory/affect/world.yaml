@@ -1,0 +1,11 @@
+# Generative world-model - active inference / Bayesian surprise (§11). Latent states x observable event
+# categories with Dirichlet counts learned online. `obs` must cover the outcomes runtime emits
+# (success/failure/insight/surprise). Fresh brain: flat counts (all 1.0).
+states: [routine, novel_problem, incident]
+obs:    [success, failure, insight, surprise]
+a:
+  - [1.0, 1.0, 1.0]   # success
+  - [1.0, 1.0, 1.0]   # failure
+  - [1.0, 1.0, 1.0]   # insight
+  - [1.0, 1.0, 1.0]   # surprise
+d: [1.0, 1.0, 1.0]    # prior over states
