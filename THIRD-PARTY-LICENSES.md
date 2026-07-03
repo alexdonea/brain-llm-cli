@@ -93,17 +93,6 @@ The full BSD-3-Clause text ships with the installed package (`numpy-*.dist-info/
 permits use, modification, and redistribution provided the copyright notice, the conditions, and the
 disclaimer are retained, and the NumPy name is not used to endorse derived products without permission.
 
-### yfinance
-
-- Optional. Only used by the market tool (`tools/market/`) when you choose to install it.
-- License: Apache-2.0
-- Project: https://github.com/ranaroussi/yfinance
-- Copyright held by Ran Aroussi and the yfinance contributors.
-
-The full Apache-2.0 text ships with the installed package (`yfinance-*.dist-info/licenses/LICENSE.txt`).
-
----
-
 ## Summary
 
 | Component | Where | License | Bundled here |
@@ -112,7 +101,6 @@ The full Apache-2.0 text ships with the installed package (`yfinance-*.dist-info
 | WordLlama | `models/wordllama/` + pip | MIT | one tokenizer config file |
 | PyYAML | pip | MIT | no |
 | numpy | pip (via wordllama) | BSD-3-Clause | no |
-| yfinance | pip (optional) | Apache-2.0 | no |
 
 All the dependency project licenses above are permissive and impose no copyleft; the only obligation is to keep
 the copyright and license notices, which this file preserves.

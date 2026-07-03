@@ -1,6 +1,0 @@
-# User model / relationship — the OTHER, for social emotion & Theory of Mind (§24). ToM is INFERRED, not
-# known. infer_user_goal / empathic_mood_shift / social_emotion / update_trust. Fresh: neutral trust.
-trust: 0.5
-inferred_goals: {}
-inferred_affect:
-  valence: 0.0

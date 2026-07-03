@@ -127,11 +127,16 @@ def salience(a: Appraisal, nm: Neuromods, w=(0.25, 0.30, 0.35, 0.10), rpe: float
 # ---------------------------------------------------------------- 4. BASE-LEVEL ACTIVATION  (ACT-R)
 def base_level_activation(retrieval_times, now: float, d: float = 0.5) -> float:
     """
-    B_i = ln( sum_k (now - t_k)^(-d) ),  d in [0.3, 0.7].   (Anderson, ACT-R)
+    B_i = ln( sum_k age_k^(-d) ),  d in [0.3, 0.7].   (Anderson, ACT-R)
     Captures BOTH recency (recent retrievals dominate) and frequency (more retrievals
     raise activation). This is why used + recent memories stay available.
+
+    Timestamps are epoch SECONDS; the age delta is scaled to DAYS (matching retention()'s unit) so the
+    d=0.5 power law spans minutes-to-months. WITHOUT this scaling the activation collapses within a few
+    seconds of encoding, which silently breaks consolidation (strength = salience*sigmoid(activation)) for
+    any memory not slept on at the instant it was encoded - and forgets even high-arousal traces on schedule.
     """
-    s = sum((max(now - tk, 1e-6)) ** (-d) for tk in retrieval_times)
+    s = sum((max((now - tk) / 86400.0, 1e-6)) ** (-d) for tk in retrieval_times)
     return math.log(s) if s > 0 else float("-inf")
 
 
@@ -540,6 +545,54 @@ def calibration_error(records, bins: int = 10) -> float:
     return ece
 
 
+def calibration_informative(records, min_spread: float = 0.05) -> bool:
+    """Guard against a meaningless ECE: if the logged `confidence` values barely vary (e.g. every encode used
+    the same default), the calibration error is computed over a near-constant and tells you nothing. Returns
+    False when the confidence spread is below `min_spread` so the read-out can say so honestly."""
+    confs = [c for c, _ in records]
+    return len(confs) >= 2 and (max(confs) - min(confs)) >= min_spread
+
+
+def valence_outcome_consistency(records) -> dict:
+    """Honesty check on the SELF-SCORED valence channel - the project's most-warned-about bias. `records` =
+    (signed_valence, outcome_polarity) pairs, polarity +1 for a win (success/insight), -1 for a loss
+    (failure). Returns the sign-agreement rate and the mean signed gap (`bias` > 0 = valence runs rosier than
+    outcomes warrant, i.e. positivity bias). Notify-only: it MEASURES the gap, never rewrites the scores.
+    This grounds valence against the one piece of reality the agent already declares (the outcome)."""
+    rec = [(float(v), float(p)) for v, p in records if p]
+    if not rec:
+        return {"n": 0, "agreement": None, "bias": None}
+    agree = sum(1 for v, p in rec if (v >= 0) == (p > 0)) / len(rec)
+    bias = sum(v - (1.0 if p > 0 else -1.0) for v, p in rec) / len(rec)
+    return {"n": len(rec), "agreement": round(agree, 3), "bias": round(bias, 3)}
+
+
+def appraisal_coherence(episodes) -> dict:
+    """A notify-only audit (run at /sleep) of incoherent SELF-SCORING across a set of episodes - the failure
+    modes nothing else can see: positive valence on declared failures (positivity bias), high control on
+    failures (illusion of control), and goal-relevance with no spread (relevance inflation that flattens
+    salience). Returns counts + human-readable flags; like identity_integrity, it surfaces - never corrects."""
+    eps = [e for e in episodes if isinstance(e, dict)]
+    fails = [e for e in eps if e.get("outcome") == "failure"]
+
+    def _ap(e, k, d=0.0):
+        v = (e.get("appraisal") or {}).get(k, d)
+        return float(v) if isinstance(v, (int, float)) else d
+
+    flags = []
+    rosy = sum(1 for e in fails if _ap(e, "valence") > 0)
+    if fails and rosy / len(fails) >= 0.5:
+        flags.append(f"{rosy}/{len(fails)} failures scored positive valence - positivity bias likely")
+    hic = sum(1 for e in fails if _ap(e, "control") >= 0.8)
+    if fails and hic / len(fails) >= 0.5:
+        flags.append(f"{hic}/{len(fails)} failures scored high control - illusion of control")
+    grs = [_ap(e, "goal_relevance", None) for e in eps if e.get("appraisal")]
+    grs = [g for g in grs if isinstance(g, (int, float))]
+    if len(grs) >= 4 and (max(grs) - min(grs)) <= 0.15:
+        flags.append("goal_relevance has near-zero spread - relevance inflation flattens salience")
+    return {"n": len(eps), "failures": len(fails), "flags": flags}
+
+
 # ---------------------------------------------------------------- 14. PERSONALITY  (temperament as affective priors)
 # Replaces the one hardcoded baseline with a per-agent OCEAN (Big Five) profile, so different agents have
 # different resting affect and different reward/threat sensitivities -- a stable extravert vs. an anxious
@@ -829,7 +882,9 @@ def performance(arousal: float, opt: float = 0.5, width: float = 0.25) -> float:
 def lc_gain(ne_tonic: float, k: float = 2.0) -> float:
     """Locus-coeruleus adaptive gain (Aston-Jones & Cohen 2005): tonic noradrenaline multiplies the gain
     on decision/recall sigmoids -> 1 + k*ne_tonic (sharper, more contrastive responses). A modeling
-    choice; the tonic-vs-phasic NE story is debated."""
+    choice; the tonic-vs-phasic NE story is debated.
+    NOTE: an engine primitive available to callers and exercised by the test-suite; not yet wired into the
+    runtime loop (so test references are not evidence of live integration)."""
     return 1.0 + k * clamp(ne_tonic)
 
 
@@ -1367,21 +1422,31 @@ def hebbian_weight(old: float, coactivation: float, lr: float = 0.3, cap: float 
     return round(min(cap, old + lr * (cap - old) * clamp(coactivation)), 4)
 
 
-def graph_proximity(edges, seed_ids, target_ids, depth: int = 2, decay: float = 0.5) -> float:
-    """Spreading-activation proximity in [0,1]: the strongest decayed path from any seed concept-node to
-    any target node over up to `depth` weighted hops, each hop multiplied by edge weight × `decay`. 1.0 if
-    seed and target overlap, 0.0 if disconnected. This is what lets a cue activate its neighbours so a
-    related-but-not-recently-mentioned memory can surface. (Quillian 1968; Collins & Loftus 1975)"""
-    seed_ids, target_ids = set(seed_ids), set(target_ids)
-    if not seed_ids or not target_ids:
-        return 0.0
-    if seed_ids & target_ids:
-        return 1.0
+def build_adjacency(edges) -> dict:
+    """Undirected weighted adjacency {node: [(neighbor, weight), ...]} from association-graph edges. Build it
+    ONCE and reuse across many graph_proximity() queries over the same graph (recall scores every episode)."""
     adj = {}
     for e in edges:
         w = float(e.get("weight", 1.0))
         adj.setdefault(e["from"], []).append((e["to"], w))
         adj.setdefault(e["to"], []).append((e["from"], w))
+    return adj
+
+
+def graph_proximity(edges, seed_ids, target_ids, depth: int = 2, decay: float = 0.5, adj=None) -> float:
+    """Spreading-activation proximity in [0,1]: the strongest decayed path from any seed concept-node to
+    any target node over up to `depth` weighted hops, each hop multiplied by edge weight × `decay`. 1.0 if
+    seed and target overlap, 0.0 if disconnected. This is what lets a cue activate its neighbours so a
+    related-but-not-recently-mentioned memory can surface. (Quillian 1968; Collins & Loftus 1975)
+    Pass a prebuilt `adj` (from build_adjacency(edges)) to skip rebuilding it when scoring many targets
+    against the same graph."""
+    seed_ids, target_ids = set(seed_ids), set(target_ids)
+    if not seed_ids or not target_ids:
+        return 0.0
+    if seed_ids & target_ids:
+        return 1.0
+    if adj is None:
+        adj = build_adjacency(edges)
     best, frontier, visited = 0.0, {s: 1.0 for s in seed_ids}, set(seed_ids)
     for _ in range(max(1, depth)):
         nxt = {}

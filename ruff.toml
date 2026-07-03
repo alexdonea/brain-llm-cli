@@ -1,0 +1,8 @@
+# Lint config - HIGH-SIGNAL only: pyflakes (F: undefined names, unused imports/vars, bad f-strings) and
+# syntax errors (E9). The codebase intentionally uses dense one-liners (e.g. `def f(x):  return ...`,
+# `a; b`), so the noisy pycodestyle style rules (E701/E702/E501 ...) are deliberately NOT enabled - this
+# gate catches real bugs, not formatting. CI runs `ruff check src tests`.
+target-version = "py310"
+
+[lint]
+select = ["F", "E9"]

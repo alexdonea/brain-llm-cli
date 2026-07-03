@@ -34,9 +34,10 @@ jobs:
         run: python -m pytest tests -q
 
   # The semantic recall path: the full required dependencies, including wordllama (numpy-only, offline).
-  # One Python is enough here; the matrix above already covers version spread.
+  # One Python is enough here; the matrix above already covers version spread. This job also enforces the
+  # coverage gate (the highest-coverage configuration, since the wordllama path is exercised too).
   semantic:
-    name: semantic backend (py3.12, wordllama)
+    name: semantic backend + coverage (py3.12, wordllama)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +46,24 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
-      - name: Install full deps + test runner
-        run: pip install -r requirements.txt pytest
-      - name: Run the suite (semantic recall path)
-        run: python -m pytest tests -q
+      - name: Install full deps + test runner + coverage
+        run: pip install -r requirements.txt pytest coverage
+      - name: Run the suite under coverage (semantic recall path) and enforce the gate
+        run: |
+          python -m coverage run --rcfile=tests/.coveragerc --source=src -m pytest tests -q
+          python -m coverage report --rcfile=tests/.coveragerc --fail-under=88
+
+  # Fast, high-signal lint: real bugs only (pyflakes F + syntax E9), config in ruff.toml. The codebase's
+  # dense one-liners mean pycodestyle style rules are intentionally off, so this stays meaningful, not noisy.
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint src + tests
+        run: ruff check src tests

@@ -590,6 +590,35 @@ def test_consolidation_promotes_strong_forgets_weak():
     assert strong in promote and weak in forget
 
 
+def test_consolidation_promotes_at_a_realistic_delay():
+    """Regression for the seconds-vs-days unit bug: a strong memory must still promote when sleep runs HOURS
+    after it was encoded - not only at age≈0. Before the fix, ACT-R activation collapsed within seconds, so
+    nothing consolidated unless slept on the instant it was encoded."""
+    ep = {"t0": now - 3 * 3600, "salience": 1.2, "affect": {"valence": 0.5, "arousal": 0.8}}   # 3 h ago, never re-retrieved
+    promote, forget = consolidation_plan([ep], now)
+    assert ep in promote and ep not in forget
+
+
+def test_consolidation_high_salience_survives_the_30_day_forget():
+    """McGaugh durability via the FORGET gate (strength = salience*activation): at 32 days a high-SALIENCE memory
+    endures the forget sweep while a low-salience one fades - the inverse of the pre-fix behaviour where salience
+    was nullified in the forget decision. (Arousal acts in the PROMOTE gate; see the rem-boost test below.)"""
+    strong = {"t0": now - 32 * 86400, "salience": 1.5, "affect": {"valence": -0.8, "arousal": 0.95}}
+    weak   = {"t0": now - 32 * 86400, "salience": 0.3, "affect": {"valence": 0.0, "arousal": 0.1}}
+    _, forget = consolidation_plan([strong, weak], now)
+    assert weak in forget and strong not in forget
+
+
+def test_consolidation_rem_boosts_high_arousal_promotion():
+    """REM emotional boost isolated: the promote gate multiplies by rem_boost = 1 + 0.5*arousal, so at an EQUAL,
+    borderline salience the HIGH-arousal trace promotes while the low-arousal one does not - arousal, not salience,
+    is what moves the needle here."""
+    hi = {"t0": now, "salience": 0.4, "affect": {"valence": -0.6, "arousal": 0.95}}
+    lo = {"t0": now, "salience": 0.4, "affect": {"valence": -0.6, "arousal": 0.05}}
+    promote, _ = consolidation_plan([hi, lo], now)
+    assert hi in promote and lo not in promote
+
+
 def test_graph_association_math():
     # tokens drop stopwords/short words; jaccard measures content overlap
     assert "cache" in tokens("the cache was stale") and "the" not in tokens("the cache was stale")
@@ -860,6 +889,31 @@ def test_appraisal_clamps_out_of_range_axes():
     assert a.novelty == 1.0 and a.valence == 1.0 and a.goal_relevance == 0.0 and a.control == 1.0
     b = Appraisal(0.5, -9.0, 0.5, 0.5, praiseworthiness=3.0, desirability_for_other=-3.0)
     assert b.valence == -1.0 and b.praiseworthiness == 1.0 and b.desirability_for_other == -1.0
+
+
+# ── honesty-grounding read-outs (G1/G2/G4): measure self-report coherence against reality ──────────────
+def test_valence_outcome_consistency_flags_positivity_bias():
+    import brain as _b
+    rosy = _b.valence_outcome_consistency([(0.8, 1), (0.7, -1), (0.6, -1)])   # rosy valence on two losses
+    assert rosy["n"] == 3 and rosy["agreement"] < 1.0 and rosy["bias"] > 0    # rosier than outcomes warrant
+    honest = _b.valence_outcome_consistency([(0.8, 1), (-0.6, -1)])
+    assert honest["agreement"] == 1.0
+    assert _b.valence_outcome_consistency([])["n"] == 0
+
+
+def test_appraisal_coherence_flags_incoherent_self_scoring():
+    import brain as _b
+    eps = [{"outcome": "failure", "appraisal": {"valence": 0.7, "control": 0.9, "goal_relevance": 0.8}},
+           {"outcome": "failure", "appraisal": {"valence": 0.5, "control": 0.85, "goal_relevance": 0.8}}]
+    flags = _b.appraisal_coherence(eps)["flags"]
+    assert any("positivity bias" in f for f in flags) and any("illusion of control" in f for f in flags)
+    assert _b.appraisal_coherence([])["flags"] == []                         # nothing to flag on empty
+
+
+def test_calibration_informative_detects_constant_confidence():
+    import brain as _b
+    assert _b.calibration_informative([(0.7, 1), (0.7, 0), (0.7, 1)]) is False    # flat → ECE is meaningless
+    assert _b.calibration_informative([(0.96, 1), (0.04, 0)]) is True             # varied → ECE means something
 
 
 if __name__ == "__main__":

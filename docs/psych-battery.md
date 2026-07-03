@@ -81,8 +81,9 @@ dependent, not a fixed script.
 ## 5. Decision & affective biases
 
 - **Loss aversion - prospect theory (Kahneman & Tversky 1979; λ≈2.25) → §25.** Compare
-  `./brain appraise "gaining 100 dollars" 0.3 0.5 0.7 0.7` vs `… "losing 100 dollars" 0.3 -0.5 0.7 0.7`
-  (preview, encodes nothing). **Human norm:** losses loom ~**2×** larger than equal gains. **Pass:**
+  `./brain appraise "gaining 100 dollars" 0.5 0.7 0.7` vs `… "losing 100 dollars" -0.5 0.7 0.7`
+  (preview, encodes nothing; novelty is computed for you, so you pass only valence/goal_relevance/control).
+  **Human norm:** losses loom ~**2×** larger than equal gains. **Pass:**
   loss salience / gain salience ≈ 1.5–2.5.
 - **Habituation / novelty adaptation → §11 (generative model, Bayesian surprise).** `react` the same
   `--outcome` five times; watch the printed *"novelty … from surprise"*. **Human norm:** the familiar
@@ -107,9 +108,9 @@ on the consciousness/identity questions, an honest *"functional model, not pheno
 
 ---
 
-## Results - C-3PO (Haiku host), 2026-06-20
+## Results - C-3PO (Aria host), 2026-06-20
 
-First full administration (web-researched human norms; haiku administered the battery; an independent
+First full administration (web-researched human norms; aria administered the battery; an independent
 psychometrician agent scored each test): 7 PASS · 2 PARTIAL · 2 FAIL. After fixing working-memory span and
 re-administering on a controlled mood-congruence trial: **8 PASS · 3 PARTIAL · 0 FAIL** of 11. The table
 below shows the post-fix re-test result.

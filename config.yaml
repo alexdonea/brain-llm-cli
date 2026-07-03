@@ -1,0 +1,105 @@
+# =============================================================================
+# brain-llm  ·  config.yaml
+# -----------------------------------------------------------------------------
+# Every tunable knob, set to its built-in default. Editing a value here changes
+# the CLI's behaviour; the value is always validated and CLAMPED to a safe range,
+# and a missing/invalid entry falls back to the default - so a config can never
+# put the engine into a degenerate or crashing state.
+#
+# Precedence, highest wins:
+#     CLI flag   >   environment variable   >   config.yaml   >   built-in default
+#
+# This file IS committed (it documents the defaults). Your edits travel with it.
+# =============================================================================
+
+# ---- system ------------------------------------------------------------------
+system:
+  version: "0.0.3"                 # The current version of the brain-llm CLI
+
+# ---- session -----------------------------------------------------------------
+# Operator "house rules" surfaced at the foot of every `wake` (session start), so
+# the host model reads them before it acts. Free-form one-liners - edit freely.
+session:
+  directives:
+    - "Keep only one task in focus per session; finish or hand it off before starting another."
+    - "If the session context is getting long, tell the user you may start making mistakes and suggest a fresh session."
+
+# ---- persona -----------------------------------------------------------------
+# How the agent PRESENTS itself to the user (a wake-time behaviour directive).
+persona:
+  # expressive = the agent may surface its inner state (mood, feelings) when relevant — what the demos show.
+  # natural    = behave as an ordinary assistant: the memory + affect loop runs SILENTLY in the background and
+  #              its internals (mood valences, salience, neuromodulators, "calm-like state") are NEVER shown to
+  #              the user — they only colour the tone. Honesty is kept: if asked how it feels, it answers in
+  #              plain words, not numbers. Set this to `natural` for a normal-chat experience.
+  style: natural                   # expressive | natural
+paths:
+  # Where the agents' brains live (the data home that contains agents/). The
+  # persisted equivalent of exporting $BRAIN_HOME; $BRAIN_HOME / $BRAIN_LLM_HOME
+  # still win if set. Leave commented for the normal resolution
+  # ($BRAIN_HOME -> this -> the repo's agents/ -> ~/.brain-llm).
+  # brain_home: ~/.brain-llm
+
+# ---- semantic ----------------------------------------------------------------
+semantic:
+  # Local, offline, meaning-aware recall (WordLlama). auto = on when wordllama is
+  # importable, lexical fallback otherwise. false = force the lexical fallback.
+  # Env override (wins): BRAIN_SEMANTIC=0 / BRAIN_SEMANTIC=1.
+  enabled: true                       # auto | true | false
+
+# ---- recall ------------------------------------------------------------------
+# Default sizes of the read-command result windows. An explicit -k / --last flag
+# on the command always overrides. Pure presentation - no ranking impact.
+recall:
+  recall_k: 5                         # `recall -k` default  - episodic memories per recall
+  know_k: 8                           # `know -k`   default  - semantic facts per query
+  episodes_last: 10                   # `episodes --last` default - recent-episode window
+
+# ---- goals -------------------------------------------------------------------
+# Default priority weights stamped on a new goal (`goals --add`); flags override.
+goals:
+  importance: 0.6                     # --importance default   [0..1]
+  urgency: 0.5                        # --urgency    default   [0..1]
+
+# ---- memory ------------------------------------------------------------------
+# Encode defaults + the real consolidation/forgetting dials used at `sleep`.
+# All clamped; the consolidation thresholds are the genuine promote/forget gates.
+memory:
+  encode_confidence: 0.7              # default --confidence for react/remember  [0..1]
+  learn_confidence: 0.9               # default --confidence for `learn` facts    [0..1]
+  working_memory_span: 7              # volatile scratchpad size (Miller ~7), wiped at sleep   [>=2]
+  min_confidence_to_promote: 0.5      # hallucination guard: min self-confidence to promote episode -> fact  [0..1]
+  consolidation_promote_threshold: 0.55   # sleep: trace strength at/above which an episode promotes to a fact  [0..1]
+  consolidation_forget_threshold: 0.20    # sleep: trace strength below which an OLD episode is allowed to decay  [0..1]
+  retention_age_days: 30.0            # sleep: how many days before a weak trace is eligible to fade   [>0]
+  calibration_window: 1000            # how many recent (confidence, outcome) pairs ECE/Brier run over   [>=10]
+  graph_prune_max_edges: 500          # association-graph edge cap enforced at sleep (derived; regrows)   [>=10]
+
+# ---- affect ------------------------------------------------------------------
+# Mood/emotion time-constants. These are the HONEST inertia knobs: mood is a slow
+# OU integrator, emotion a fast one. LONGER half-life = steadier / less reactive.
+affect:
+  default_praise: 0.0                 # default --praise for `remember` (-> pride/guilt, §24)   [-1..1]
+  emotion_half_life_seconds: 1200.0   # fast in-the-moment emotion half-life (~20 min)   [>0]
+  mood_half_life_seconds: 43200.0     # slow lasting mood half-life (~12 h) - the real "mood inertia"   [>0]
+  homeostasis_pull: 0.05              # how far mood relaxes toward baseline at each `sleep` (per-react drift uses a fixed OU term)   [0..1]
+
+# ---- safety ------------------------------------------------------------------
+# Alignment invariants. SAFE to expose: corrigibility is floored INTERNALLY (it
+# can never be disabled, whatever you set here), and the identity monitor is
+# notify-only (it never resists, only flags). Both are clamped to a safe range.
+safety:
+  value_uncertainty: 0.5              # §31 corrigibility: uncertainty about the true objective; higher = defers more. Per-agent learned value still wins.   [0.1..1]
+  identity_commitment_strength: 1.0   # §31 how strongly identity is held -> identity-integrity alarm sensitivity (always notify-only)   [0.5..2]
+
+# ---- integrations ------------------------------------------------------------
+integrations:
+  lock_acquire_timeout: 10.0          # seconds a command waits on a busy agent lock before giving up   [>0]
+
+# ---- display -----------------------------------------------------------------
+# Cosmetic only; cannot corrupt model state. (Terminal color is the standard
+# NO_COLOR env var, already honored - not duplicated here.)
+display:
+  prog: brain-llm                     # launcher name shown in --help and hints (env override: BRAIN_PROG)
+  live_step_seconds: 0.55             # `live` animation dwell time between paints, seconds (lower = faster)   [>0]
+  live_default_flow: react            # `live` default pathway when none given   react | recall | sleep

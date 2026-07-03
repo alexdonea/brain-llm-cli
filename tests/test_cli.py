@@ -2,8 +2,7 @@
 Run: python3 test_cli.py   (or under coverage with the others).
 
 We set BRAIN_HOME to a fresh temp dir BEFORE importing agent (the data home is resolved at import), then
-call agent.main([...]) and capture stdout, so coverage sees agent.py. External-service commands (telegram,
-market) are not exercised here - they need a live token/network and are verified live."""
+call agent.main([...]) and capture stdout, so coverage sees agent.py."""
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "src"))
 
@@ -95,7 +94,14 @@ def test_indicators_calibration():
 
 
 def test_sleep():
+    run("create", "sleeper")
+    run("react", "shipped a feature", 0.7, 0.9, 0.8, "--domain", "work", "--outcome", "success", "--reward", 0.8)
     out, c = run("sleep"); assert c == 0
+    assert "slept:" in out and "facts" in out                 # asserts the human summary, not just exit 0
+    outj, cj = run("sleep", "--json"); assert cj == 0
+    import json
+    d = json.loads(outj)                                      # --json is now honored (was ignored, always raw JSON)
+    assert {"promoted", "forgotten", "facts", "episodes"} <= set(d)
 
 
 # ── memory ───────────────────────────────────────────────────────────────────────────────────────
@@ -118,9 +124,10 @@ def test_remember_and_episodes():
 
 def test_appraise_preview_does_not_encode():
     before, _ = run("episodes")
-    out, c = run("appraise", "a dry-run event", 0.5, -0.3, 0.5, 0.4); assert c == 0
+    out, c = run("appraise", "a dry-run event", -0.3, 0.5, 0.4); assert c == 0   # event + 3 axes; novelty computed
     after, _ = run("episodes")
     assert before.count("e-") == after.count("e-")        # preview must NOT add an episode
+    assert "a dry-run event" in out                       # the event is used now, not silently discarded
 
 
 def test_learn_then_know():
@@ -162,6 +169,16 @@ def test_goals_add_focus_progress():
 
 def test_deliberate():
     out, c = run("deliberate", "stop and browse instead", 0.3); assert c == 0
+    assert "impulse" in out.lower()                           # renders the deliberation, not just exit 0
+
+
+def test_integrity_safety_monitor():                          # §31 - the notify-only identity-integrity read-out
+    run("create", "guardian")
+    out, c = run("integrity", 0.2); assert c == 0 and "within bounds" in out
+    outj, cj = run("integrity", 0.9, "--json"); assert cj == 0
+    import json
+    d = json.loads(outj)
+    assert d["breached"] is True and d["action"] == "notify"  # high pressure → notify, NEVER resist (safety stance)
 
 
 def test_plan_and_next():
@@ -296,6 +313,24 @@ def test_research_from_file():
     assert "could not read" in run("research", "--topic", "x", "--file", "/no/such/file.json")[0]  # bad file → clean error
 
 
+def test_nonfinite_numeric_flags_are_rejected_at_the_boundary():
+    """NaN/Inf must never reach the value store: the numeric flags use the _finite argparse type, so a
+    `--reward inf` is refused with a clear error (exit != 0) instead of persisting `.inf` into value.yaml."""
+    run("create", "robusto")
+    for flag, val in (("--reward", "inf"), ("--confidence", "nan")):
+        _, c = run("react", "x", "0.5", "0.5", "0.5", flag, val)
+        assert c != 0
+
+
+def test_research_rejects_nonfinite_appraisal_values():
+    import json
+    run("create", "researcho")
+    path = os.path.join(_TMP, "bad_findings.json")
+    json.dump([{"task": "t", "appraisal": [0.5, 0.5, 0.5, 1e999]}], open(path, "w"))   # 1e999 parses to Inf
+    out, c = run("research", "--topic", "t", "--file", path)
+    assert c != 0 and "non-finite" in out.lower()
+
+
 def test_init_writes_single_entry_file_in_cwd():
     cwd0 = os.getcwd()
     d = tempfile.mkdtemp(prefix="brain_init_")
@@ -320,7 +355,7 @@ def test_init_falls_back_to_abs_path_when_launcher_absent():
     d = tempfile.mkdtemp(prefix="brain_init_abs_")
     try:
         os.chdir(d); os.environ["PATH"] = ""                      # brain-llm not findable on PATH
-        out, c = run("init"); assert c == 0                       # no --name → "(active agent: …)" print branch
+        out, c = run("init", "--name", "fresh_abs_agent"); assert c == 0
         assert "agent.py" in open(os.path.join(d, "AGENT-BRAIN.MD")).read()   # falls back to an absolute python call
     finally:
         os.environ["PATH"] = path0; os.chdir(cwd0); shutil.rmtree(d, ignore_errors=True)
@@ -331,7 +366,8 @@ def test_init_is_idempotent_single_file():
     d = tempfile.mkdtemp(prefix="brain_init_sync_")
     try:
         os.chdir(d)
-        run("init"); run("init")                                 # re-init just rewrites the one entry file, no drift
+        out, c = run("init", "--name", "fresh_agent2"); assert c == 0
+        out, c = run("init", "--name", "fresh_agent2"); assert c != 0  # fails because it exists
         entries = [f for f in os.listdir(d) if f.endswith((".md", ".MD"))]
         assert entries == ["AGENT-BRAIN.MD"]                      # exactly one entry file, no vendor duplicates
         body = open(os.path.join(d, "AGENT-BRAIN.MD")).read()
@@ -346,10 +382,13 @@ def test_on_path_helper():
 
 
 def test_reset_and_seed():
-    run("create", "throwaway")                                # fresh agent → reset/seed need no --yes
-    assert run("reset")[1] == 0
-    assert run("reset", "--persona")[1] == 0
-    assert run("seed")[1] == 0
+    run("create", "throwaway")
+    run("react", "a memory worth wiping", 0.5, 0.5, 0.5)       # give it observable state to blank
+    assert "(no episodes yet)" not in run("episodes")[0]       # it now has an episode
+    assert run("reset", "--yes")[1] == 0                       # has memory now → needs --yes
+    assert "(no episodes yet)" in run("episodes")[0]           # reset ACTUALLY blanked the episodic log (not a silent no-op)
+    assert run("reset", "--persona", "--yes")[1] == 0
+    assert run("seed", "--yes")[1] == 0
     run("use", "default"); run("remove", "throwaway", "--yes")
 
 
@@ -392,7 +431,7 @@ def test_bare_agent_command_requires_a_name():
 
 def test_version_flag():
     out, c = _call(["--version"])                         # `--version` prints the version and exits 0
-    assert c == 0 and agent.__version__ in out and agent.__version__ == "0.0.2"
+    assert c == 0 and agent.__version__ in out and agent.__version__ == "0.0.3"
 
 
 # ── registry error branches ──────────────────────────────────────────────────────────────────────
@@ -518,6 +557,47 @@ def test_know_searches_facts_by_meaning_or_substring():
     run("learn", "the mitochondria is the powerhouse of the cell")
     out, c = run("know", "mitochondria"); assert c == 0 and "powerhouse" in out
     out, c = run("know", "powerhouse", "-k", "3"); assert c == 0 and "mitochondria" in out
+
+
+def test_know_k_limits_output_on_the_substring_path():
+    """`know -k N` (and the recall.know_k config default it feeds) must cap output on EVERY path, not only on
+    semantic-search success - the substring/lexical path is the common no-wordllama case."""
+    run("create", "knowk")
+    for f in ("apple alpha", "apple bravo", "apple charlie"):
+        run("learn", f)
+    out, c = run("know", "apple", "-k", "1"); assert c == 0
+    assert out.count("[f-") == 1                          # exactly one fact returned, not all three
+
+
+def test_config_identity_commitment_strength_feeds_integrity(monkeypatch):
+    """The safety knob is exposed (clamped) and actually changes the notify-only alarm: alarm = pressure ×
+    commitment_strength, so a more strongly held identity raises a louder flag for the same pressure."""
+    run("create", "idtest")
+    monkeypatch.setattr(agent, "CONFIG", {"safety": {"identity_commitment_strength": 2.0}})
+    hi, _ = run("integrity", "0.8")
+    monkeypatch.setattr(agent, "CONFIG", {"safety": {"identity_commitment_strength": 0.5}})
+    lo, _ = run("integrity", "0.8")
+    a_hi = float(re.search(r"alarm ([0-9.]+)", hi).group(1))
+    a_lo = float(re.search(r"alarm ([0-9.]+)", lo).group(1))
+    assert a_hi > a_lo                                    # stronger commitment -> louder alarm under the same pressure
+
+
+def test_evidence_does_not_crash_on_malformed_int():
+    """Regression: a multi-minus token like '--5' (or a bare '-') must NOT raise an uncaught ValueError - it
+    degrades to no grounding; a real signed int still grounds."""
+    assert agent._evidence("--5") == (None, None)
+    assert agent._evidence("-") == (None, None)
+    assert agent._evidence("exit=0")[0] == "success"
+    assert agent._evidence("exit=-1")[0] == "failure"
+
+
+def test_know_k_clamps_non_positive():
+    """`know -k 0` / `-k <negative>` must clamp to 1, not dump the whole fact store."""
+    run("create", "knc")
+    for f in ("pear alpha", "pear bravo", "pear charlie"):
+        run("learn", f)
+    out, c = run("know", "pear", "-k", "0"); assert c == 0
+    assert out.count("[f-") == 1
 
 
 def test_wake_surfaces_self_continuity():
@@ -692,6 +772,34 @@ def test_semantic_index_is_incremental_only_embeds_changes():
     finally:
         semantic.embed = real_embed
     shutil.rmtree(root, ignore_errors=True)
+
+
+def test_evidence_grounds_outcome_and_confidence():
+    import json
+    run("create", "grounded")
+    run("react", "ran the suite", 0.6, 0.8, 0.7, "--domain", "ci", "--evidence", "tests=pass")
+    e = json.loads(run("episodes", "--json")[0])[-1]
+    assert e["outcome"] == "success" and e["evidence"] == "tests=pass" and e["confidence"] > 0.9
+    out, _ = run("react", "claimed it worked", 0.8, 0.7, 0.9, "--domain", "ci", "--outcome", "success", "--evidence", "exit=1")
+    assert "overrides" in out                                   # evidence beats a contradicting self-declared outcome
+    e2 = json.loads(run("episodes", "--json")[0])[-1]
+    assert e2["outcome"] == "failure" and e2["confidence"] < 0.1
+
+
+def test_notes_lists_working_memory():
+    run("create", "noter")
+    run("note", "first scratch"); run("note", "second scratch")
+    out, c = run("notes"); assert c == 0
+    assert "first scratch" in out and "second scratch" in out
+
+
+def test_ensure_agents_skips_default_when_creating_named(tmp_path, monkeypatch):
+    fresh = str(tmp_path / "home" / "agents")
+    monkeypatch.setattr(agent, "AGENTS_DIR", fresh)
+    agent._ensure_agents(seed_default=False)              # the create/init path: no auto-'default' noise
+    assert agent._list_agents() == []
+    agent._ensure_agents(seed_default=True)               # a normal first command: seed someone to talk to
+    assert agent._list_agents() == ["default"]
 
 
 if __name__ == "__main__":

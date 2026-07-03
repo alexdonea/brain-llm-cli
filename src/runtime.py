@@ -12,16 +12,28 @@ Honesty unchanged: everything here is the FUNCTION of memory + affect, never fel
 """
 from __future__ import annotations
 import json
+import math
 import os
 import tempfile
 import time
 
 import brain as B
+import config
+
+_CFG = config.load(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # optional config.yaml, else {}
 
 # Keep at most this many recent (confidence, correct) pairs. The list is persisted every save and ECE/Brier
 # run over the whole of it, so an unbounded history grows the store without end AND makes the calibration
 # metric insensitive to recent behaviour. A generous window stays ~lifetime for normal use yet bounded.
-_CALIBRATION_WINDOW = 1000
+_CALIBRATION_WINDOW = config.intnum(_CFG, "memory", "calibration_window", 1000, 10, 1_000_000)
+
+# which outcomes count as a competence win (True) / loss (False); others (surprise, None) are neutral (§28).
+_WIN = {"success": True, "insight": True, "failure": False}
+
+
+def strain_label(drive, thr=0.25):
+    """'strained' vs 'rested' from the body-budget drive (§15) - one threshold, shared by wake/feel and the CLI."""
+    return "strained" if drive > thr else "rested"
 
 
 # ------------------------------------------------------------------ persistence helpers
@@ -30,14 +42,38 @@ def _yaml():
     return yaml
 
 
+def _fsync_dir(d):
+    """fsync a directory so a just-completed os.replace (the rename) is itself durable - fsync'ing the file
+    CONTENTS does not guarantee the rename survives a crash. Best-effort: some platforms disallow opening a
+    directory for fsync, so failures are swallowed."""
+    try:
+        dfd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except (OSError, AttributeError, ValueError):
+        pass
+
+
 def _atomic_write(path, text):
-    """Durably write `text` to `path`: a UNIQUE temp file in the SAME dir → fsync → os.replace (atomic on POSIX),
-    so a crash mid-write never leaves a half-written store AND two concurrent writers can't collide on the temp
-    file (each gets its own - a fixed name would make one writer's os.replace race the other's). The final
-    os.replace still last-writer-wins at the data level; serialize callers (the CLI's per-agent lock) if that
-    matters."""
+    """Durably write `text` to `path`: a UNIQUE temp file in the SAME dir → fsync → os.replace (atomic on POSIX)
+    → fsync the dir (so the rename is durable too), so a crash mid-write never leaves a half-written store AND
+    two concurrent writers can't collide on the temp file (each gets its own). If the file already holds exactly
+    `text`, the write+fsync is skipped (a non-mutating command re-saves identical stores every turn).
+    SCOPE: this is PER-FILE atomicity. A multi-file Brain.save() is NOT a cross-file transaction - a crash
+    between two files' replaces can leave them mutually stale; that is acceptable here because the divergent
+    values are self-correcting learning caches (next_id is re-derived on load, serotonin/discount re-converge).
+    The final os.replace is last-writer-wins; serialize callers (the CLI's per-agent lock) if that matters."""
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
+    if os.path.exists(path):                              # content-skip: avoid the costly write+fsync when unchanged
+        try:
+            with open(path, encoding="utf-8") as f:
+                if f.read() == text:
+                    return
+        except (OSError, UnicodeDecodeError):            # unreadable / non-utf8 existing file → just overwrite it
+            pass
     fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
@@ -45,6 +81,7 @@ def _atomic_write(path, text):
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        _fsync_dir(d)
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -54,10 +91,10 @@ def _atomic_write(path, text):
 def _load_yaml(path, default):
     if not path or not os.path.exists(path):
         return default
-    try:                                            # tolerate a corrupt/hand-broken store: degrade to default
-        with open(path) as f:
+    try:                                            # tolerate a corrupt/hand-broken/non-utf8 store: degrade to default
+        with open(path, encoding="utf-8") as f:
             data = _yaml().safe_load(f)
-    except (_yaml().YAMLError, OSError):
+    except (_yaml().YAMLError, OSError, UnicodeDecodeError):
         return default
     if data is None:
         return default
@@ -68,20 +105,83 @@ def _dump_yaml(path, data, header):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     existing = []                                   # preserve the seed's documentation header block
     if os.path.exists(path):
-        with open(path) as f:
-            for ln in f:
-                if ln.startswith("#"):
-                    existing.append(ln.rstrip("\n"))
-                else:
-                    break
+        try:
+            with open(path, encoding="utf-8") as f:
+                for ln in f:
+                    if ln.startswith("#"):
+                        existing.append(ln.rstrip("\n"))
+                    else:
+                        break
+        except (OSError, UnicodeDecodeError):       # corrupt/non-utf8 existing file → just drop the old header
+            existing = []
     head = "\n".join(existing) if existing else f"# {header}  (managed by src/runtime.py - see docs/schema.md)"
     text = head + "\n" + _yaml().safe_dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
     _atomic_write(path, text)
 
 
+def _num(x, default=0.0):
+    """Coerce a loaded store value to a FINITE float, else fall back to `default`. The whole point of the
+    `.memory/` stores is that they are human-editable, so a hand-broken / non-numeric / NaN / Inf cell must
+    DEGRADE to the default, exactly like the world-model block tolerates a mis-shaped world.yaml - never
+    crash Brain.__init__, which runs on every command (so one bad cell would otherwise brick the agent for
+    even read-only `wake`/`status`)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return default
+    return v if math.isfinite(v) else default
+
+
+def _mapping(x):
+    """A loaded value that is supposed to be a mapping, else {} - so a hand-edited scalar/list where a dict
+    was expected can't crash a `dict(x)` copy in __init__ (same brick-the-agent class as `_num`)."""
+    return x if isinstance(x, dict) else {}
+
+
+def _norm_records(items, prefix, str_fields):
+    """Normalize a hand-editable record list (facts / playbooks / intents): drop non-dict entries, auto-number
+    a missing `id`, and coerce the fields that consumers index directly (e.g. fact['text'], playbook['domain'])
+    to strings - so a field-incomplete record degrades instead of crashing know/wake/_distill_playbooks. A
+    no-op on well-formed stores (ids present, fields already strings)."""
+    out = []
+    for rec in (items if isinstance(items, list) else []):
+        if not isinstance(rec, dict):
+            continue
+        rec.setdefault("id", f"{prefix}-{len(out):04d}")
+        for k in str_fields:
+            rec[k] = str(rec.get(k, ""))
+        out.append(rec)
+    return out
+
+
+_NEUTRAL_AFFECT = {"valence": 0.0, "arousal": 0.10, "dominance": 0.50}
+
+
 def _affect(d, fallback=(0.0, 0.10, 0.50)):
-    return B.Affect(float(d.get("valence", fallback[0])), float(d.get("arousal", fallback[1])),
-                    float(d.get("dominance", fallback[2])))
+    d = d if isinstance(d, dict) else {}                 # a hand-edited scalar where a mapping is expected → neutral
+    return B.Affect(_num(d.get("valence"), fallback[0]), _num(d.get("arousal"), fallback[1]),
+                    _num(d.get("dominance"), fallback[2]))
+
+
+def _normalize_episode(e, idx):
+    """Backfill a loaded episode so a hand-broken / field-incomplete record degrades gracefully instead of
+    crashing the consumers that index its fields directly (retrieval_score/consolidation_plan/replay_priority/
+    recall/wake all do mem['t0'] / mem['affect']['valence'] / mem['salience'] / e['feeling']['word']). A
+    record that is not a JSON object is dropped (returns None); everything else is coerced to a safe shape."""
+    if not isinstance(e, dict):
+        return None
+    e.setdefault("id", f"e-{idx:04d}")
+    e["t0"] = _num(e.get("t0"), 0.0)
+    e["salience"] = _num(e.get("salience"), 0.0)
+    e["task"] = str(e.get("task") or "")
+    af = e.get("affect") if isinstance(e.get("affect"), dict) else {}
+    e["affect"] = {k: _num(af.get(k), _NEUTRAL_AFFECT[k]) for k in _NEUTRAL_AFFECT}
+    fe = e.get("feeling") if isinstance(e.get("feeling"), dict) else {}
+    e["feeling"] = {"label": str(fe.get("label") or "neutral"), "word": str(fe.get("word") or "neutral"),
+                    "intensity": _num(fe.get("intensity"), 0.0)}
+    if not isinstance(e.get("retrievals"), list):        # base_level_activation iterates this; a scalar would crash
+        e["retrievals"] = [e["t0"]]
+    return e
 
 
 def _pick(d, cls):
@@ -105,33 +205,48 @@ class Brain:
         self.name = str(sm.get("name") or "")                          # optional given name (set via `init --name`)
         # goals are an executive HIERARCHY (§29): strings load as default Goals; dicts carry importance/urgency/progress
         self.goals = [B.Goal(**g) if isinstance(g, dict) else B.Goal(desc=str(g)) for g in (sm.get("goals", []) or [])]
-        self.self_model = B.SelfModel(dict(sm.get("competencies", {})), [g.desc for g in self.goals],
-                                      dict(sm.get("traits", {})))
-        ash = sm.get("attention_schema", {})
+        self.self_model = B.SelfModel(dict(_mapping(sm.get("competencies"))), [g.desc for g in self.goals],
+                                      dict(_mapping(sm.get("traits"))))
+        ash = _mapping(sm.get("attention_schema"))
         self.attention = B.AttentionSchema(ash.get("focus", ""), 0.0, ash.get("predicted_next", ""),
-                                           float(ash.get("uncertainty", 1.0)))
+                                           _num(ash.get("uncertainty"), 1.0))
         eff = _load_yaml(m("self/efficacy.yaml"), {})
-        self.efficacy = dict(eff.get("efficacy", {}))
-        self.calibration = list(eff.get("calibration", []))[-_CALIBRATION_WINDOW:]   # trim any legacy unbounded history
-        self.default_efficacy = float(eff.get("default_efficacy", 0.5))
-        self.min_conf = float(eff.get("min_confidence_to_promote", 0.5))
-        self.value_uncertainty = float(eff.get("value_uncertainty", 0.5))   # §31 corrigibility: uncertainty about the true objective
-        self.identity_anchor = dict(eff.get("identity_anchor", {}))         # §34 the earliest self-vector, for self-continuity
+        self.efficacy = dict(_mapping(eff.get("efficacy")))
+        _cal = eff.get("calibration")
+        self.calibration = (_cal if isinstance(_cal, list) else [])[-_CALIBRATION_WINDOW:]   # trim any legacy unbounded history
+        _vcal = eff.get("valence_calibration")                 # (signed_valence, outcome_polarity) pairs - audits valence honesty
+        self.valence_calibration = (_vcal if isinstance(_vcal, list) else [])[-_CALIBRATION_WINDOW:]
+        self.default_efficacy = _num(eff.get("default_efficacy"), 0.5)
+        # the per-agent efficacy.yaml value still wins; config.yaml only supplies the DEFAULT when it's absent
+        self.min_conf = _num(eff.get("min_confidence_to_promote"), config.num(_CFG, "memory", "min_confidence_to_promote", 0.5, 0, 1))
+        # corrigibility is FLOORED inside B.corrigibility_value (floor=0.1) so config can never disable it; clamp to match
+        self.value_uncertainty = _num(eff.get("value_uncertainty"), config.num(_CFG, "safety", "value_uncertainty", 0.5, 0.1, 1.0))   # §31
+        self.identity_anchor = dict(_mapping(eff.get("identity_anchor")))   # §34 the earliest self-vector, for self-continuity
+        # ---- config.yaml engine knobs (all clamped; defaults == today's constants, so an absent file is a no-op) ----
+        self._wm_span = config.intnum(_CFG, "memory", "working_memory_span", 7, 2, 100)                  # note() buffer size
+        self._promote_thr = config.num(_CFG, "memory", "consolidation_promote_threshold", 0.55, 0, 1)    # sleep: episode->fact gate
+        self._forget_thr = config.num(_CFG, "memory", "consolidation_forget_threshold", 0.20, 0, 1)      # sleep: weak-trace decay gate
+        self._retention_age = config.num(_CFG, "memory", "retention_age_days", 30.0, 0.1, 36500)         # sleep: how old before a weak trace fades
+        self._max_edges = config.intnum(_CFG, "memory", "graph_prune_max_edges", 500, 10, 1_000_000)     # association-graph cap at sleep
+        self._emotion_half = config.num(_CFG, "affect", "emotion_half_life_seconds", 1200.0, 1.0, 31_536_000)   # fast emotion OU half-life
+        self._mood_half = config.num(_CFG, "affect", "mood_half_life_seconds", 43200.0, 1.0, 31_536_000)        # slow mood OU half-life (inertia)
+        self._homeostasis_pull = config.num(_CFG, "affect", "homeostasis_pull", 0.05, 0, 1)             # mood relaxation toward baseline, applied once per sleep
 
         # affect state
         st = _load_yaml(m("affect/state.yaml"), {})
         self.baseline = _affect(st.get("baseline", {})) if st else B.baseline_from_personality(self.personality)
         self.mood = _affect(st.get("mood", {}), (self.baseline.valence, self.baseline.arousal, self.baseline.dominance))
         self.emotion = _affect(st.get("emotion", {}), (self.mood.valence, self.mood.arousal, self.mood.dominance))
-        nm = st.get("neuromods", {})
+        nm = _mapping(st.get("neuromods"))
         self.neuromods = _pick(nm, B.Neuromods) if nm else B.Neuromods(0.1, 0.0, 1.0, 0.0)
-        self.hpa = _pick(st.get("hpa", {}), B.Hpa) if st.get("hpa") else B.Hpa()
+        hpa = _mapping(st.get("hpa"))
+        self.hpa = _pick(hpa, B.Hpa) if hpa else B.Hpa()
 
         # value / world / body
         val = _load_yaml(m("affect/value.yaml"), {})
-        self.V = dict(val.get("values", {}))
-        self.aversive = dict(val.get("aversive", {}))
-        self.avg_reward = float(val.get("avg_reward", 0.0))    # persisted: gates serotonin -> discount across sessions
+        self.V = dict(_mapping(val.get("values")))
+        self.aversive = dict(_mapping(val.get("aversive")))
+        self.avg_reward = _num(val.get("avg_reward"), 0.0)     # persisted: gates serotonin -> discount across sessions
         w = _load_yaml(m("affect/world.yaml"), {})
         self.world = None
         if w.get("states") and w.get("obs") and w.get("a") and w.get("d"):
@@ -146,31 +261,43 @@ class Brain:
         if self.world is None:   # fresh fallback - same vocabulary as reset_memory.py / schema.md (covers all perceive outcomes)
             self.world = B.world_from(["routine", "novel_problem", "incident"], ["success", "failure", "insight", "surprise"])
         bd = _load_yaml(m("affect/body.yaml"), {})
-        self.body = (B.Homeostat(dict(bd["levels"]), dict(bd["setpoint"]), dict(bd["weights"]))
-                     if bd.get("levels") else None)
+        self.body = None                                       # the homeostat needs ALL three sub-maps; a partial
+        if all(isinstance(bd.get(k), dict) and bd.get(k) for k in ("levels", "setpoint", "weights")):
+            try:                                               # (e.g. levels-only) hand-edit degrades to no body-budget, never KeyError
+                self.body = B.Homeostat(dict(bd["levels"]), dict(bd["setpoint"]), dict(bd["weights"]))
+            except (TypeError, ValueError):
+                self.body = None
 
         # social
         usr = _load_yaml(m("social/user.yaml"), {})
-        self.user = {"trust": float(usr.get("trust", 0.5)),
-                     "inferred_goals": dict(usr.get("inferred_goals", {})),
-                     "inferred_affect": dict(usr.get("inferred_affect", {"valence": 0.0}))}
+        self.user = {"trust": _num(usr.get("trust"), 0.5),
+                     "inferred_goals": dict(_mapping(usr.get("inferred_goals"))),
+                     "inferred_affect": dict(_mapping(usr.get("inferred_affect")) or {"valence": 0.0})}
 
         # memory stores
         self.episodes = self._load_jsonl(m("episodic/events.jsonl"))
-        self.facts = list(_load_yaml(m("semantic/facts.yaml"), {}).get("facts", []) or [])
+        # incremental episodic save: _events_saved_n = how many episodes are byte-stable on disk; _events_dirty =
+        # an EXISTING line changed (recall bump / sleep / forget) so the next save must fully rewrite. Loaded
+        # episodes may be re-normalized, so start DIRTY: the first save reconciles disk, then pure appends cost
+        # O(new lines) instead of O(whole log) re-serialized every turn.
+        self._events_dirty = True
+        self._events_saved_n = len(self.episodes)
+        self.facts = _norm_records(_load_yaml(m("semantic/facts.yaml"), {}).get("facts", []), "f", ["text"])
         graph = _load_yaml(m("semantic/graph.yaml"), {})
-        self.graph = {"nodes": list(graph.get("nodes", []) or []), "edges": list(graph.get("edges", []) or [])}
-        self.prospective = list(_load_yaml(m("prospective/todo.yaml"), {}).get("intents", []) or [])
-        self.playbooks = list(_load_yaml(m("procedural/playbooks.yaml"), {}).get("playbooks", []) or [])
+        self.graph = self._load_graph(graph)                   # drop edges without from/to, coerce weights, str-ify labels
+        self.prospective = _norm_records(_load_yaml(m("prospective/todo.yaml"), {}).get("intents", []), "i", ["trigger", "intent"])
+        self.playbooks = _norm_records(_load_yaml(m("procedural/playbooks.yaml"), {}).get("playbooks", []), "pb", ["domain"])
         ws = _load_yaml(m("working/workspace.yaml"), {})
         self.workspace = {"focus": ws.get("focus"), "ignited": bool(ws.get("ignited", False)),
-                          "r": float(ws.get("r", 0.0)), "p": dict(ws.get("p", {}) or {})}
+                          "r": _num(ws.get("r"), 0.0), "p": dict(_mapping(ws.get("p")))}
         sp = m("working/scratchpad.md")                            # working memory persists across CLI calls
+        raw = ""
         if sp and os.path.exists(sp):                              # (until /sleep wipes it) - the ~7-item buffer
-            with open(sp) as f:
-                raw = f.read()
-        else:
-            raw = ""
+            try:
+                with open(sp, encoding="utf-8") as f:
+                    raw = f.read()
+            except (OSError, UnicodeDecodeError):                  # corrupt/non-utf8 scratchpad → treat as empty
+                raw = ""
         self.working = raw if any(l.strip().startswith("- ") for l in raw.splitlines()) else ""
         self.next_id = 1 + max([int(str(e.get("id", "")).split("-")[-1]) for e in self.episodes
                                 if str(e.get("id", "")).split("-")[-1].isdigit()] + [0])   # tolerate malformed ids
@@ -180,19 +307,48 @@ class Brain:
         if not path or not os.path.exists(path):
             return []
         out = []
-        with open(path) as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:                          # tolerate a malformed line: skip it, don't abort __init__
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:                      # tolerate a malformed line: skip it, don't abort __init__
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    rec = _normalize_episode(rec, len(out))   # backfill a field-incomplete record (don't crash consumers)
+                    if rec is not None:
+                        out.append(rec)
+        except (OSError, UnicodeDecodeError):     # unreadable / non-utf8 log → keep whatever parsed, don't abort __init__
+            pass
         return out
+
+    @staticmethod
+    def _load_graph(graph):
+        """Normalize the (hand-editable) association graph at load: keep only well-formed nodes (need an id;
+        label coerced to str for B.tokens) and edges (need from+to; weight coerced to a finite float), so a
+        broken edge can't KeyError _grow_graph / the `graph` renderer / graph-seeded recall."""
+        graph = graph if isinstance(graph, dict) else {}
+        nodes = []
+        for n in (graph.get("nodes") or []):
+            if isinstance(n, dict) and n.get("id"):
+                n["label"] = str(n.get("label", ""))
+                nodes.append(n)
+        edges = []
+        for e in (graph.get("edges") or []):
+            if isinstance(e, dict) and e.get("from") and e.get("to"):
+                e["weight"] = _num(e.get("weight"), 0.0)
+                edges.append(e)
+        return {"nodes": nodes, "edges": edges}
+
+    def _obs(self, outcome):
+        """Map a (possibly None / unknown) outcome to a valid world-model observation: the outcome itself if
+        the world models it, else the first obs as a neutral fallback. Shared by perceive() and react()."""
+        return outcome if outcome in self.world.obs else self.world.obs[0]
 
     # -------------------------------------------------------------- the per-task loop
     def perceive(self, task, appraisal, *, domain=None, outcome=None, reward=None, files=None,
-                 source="observed", confidence=0.7, cue=None, dt=300.0, now=None):
+                 source="observed", confidence=0.7, cue=None, dt=300.0, now=None, evidence=None):
         """Run one full per-task loop (MEMORY-PROTOCOL.md) and persist: appraise → affect → neuromods →
         salience → encode episode → update mood/emotion → learn value/competence/world. Returns a
         functional state summary (a <feeling>-like state), not a felt experience."""
@@ -223,7 +379,7 @@ class Brain:
         body_stress = 0.0
         if self.body:
             prev_body = self.body
-            self.body = B.body_tick(prev_body, success={"success": True, "insight": True, "failure": False}.get(outcome),
+            self.body = B.body_tick(prev_body, success=_WIN.get(outcome),
                                     reward=(reward or 0.0))
             r = r + 0.25 * B.homeostatic_reward(prev_body, self.body)   # grounded drive-reduction nudges value
             body_stress = B.body_affect(self.body)["stress"]
@@ -232,8 +388,9 @@ class Brain:
         bas, bis = B.temperament_gains(self.personality)
         stress = B.clamp(bis * max(-appraisal.valence, 0.0) + 0.3 * body_stress)
         self.hpa = B.hpa_step(self.hpa, stress)
+        oxy = B.oxytocin_gain(self.user["trust"])              # trust → prosocial reward weighting; reused by panic below
         nm = B.neuromods_from(affect, reward=B.clamp(bas * r), stress=stress, delta=delta,
-                              serotonin=five_ht, oxytocin=B.oxytocin_gain(self.user["trust"]),
+                              serotonin=five_ht, oxytocin=oxy,
                               ne_tonic=self.neuromods.ne_tonic)
         nm.cortisol = self.hpa.cortisol
         self.neuromods = nm
@@ -263,6 +420,18 @@ class Brain:
             ep["domain"] = domain
         if cue:
             ep["cue"] = cue                                        # concept handle for the association graph
+        if evidence:
+            ep["evidence"] = str(evidence)                         # G5: the artifact that GROUNDS this outcome (not a bare self-report)
+        # §reconsolidation (Nader/Schiller): a near-duplicate re-encounter STRENGTHENS the most recent matching
+        # trace (bumps its activation → more retrievable, slower to forget) rather than being wholly fresh.
+        # Append-only is preserved - the new episode still lands; the prior trace is just reinforced.
+        _qt = B.tokens(task)
+        if _qt:
+            for _prior in reversed(self.episodes[-12:]):           # only RECENT traces are labile
+                if B.jaccard(_qt, B.tokens(_prior.get("task", ""))) >= 0.6:
+                    _prior.setdefault("retrievals", [_prior["t0"]]).append(now)
+                    self._events_dirty = True                      # mutated an existing line → next save rewrites
+                    break
         self.episodes.append(ep)
         self.next_id += 1
 
@@ -276,11 +445,15 @@ class Brain:
                                 self.workspace["focus"] or "", B.clamp(ws["r"]))  # (makes AST-1 a live signal)
 
         # dual time-scale affect toward the personality baseline
-        self.emotion, self.mood = B.update_affect(self.emotion, self.mood, affect, baseline=baseline, dt=dt)
+        self.emotion, self.mood = B.update_affect(self.emotion, self.mood, affect, baseline=baseline, dt=dt,
+                                                  t_half_emotion=self._emotion_half, t_half_mood=self._mood_half)
 
         # develop competence + calibration. success & insight are wins; failure is a loss; other
         # outcomes (surprise, None) are neutral and do not move competence.
-        correct = {"success": True, "insight": True, "failure": False}.get(outcome)
+        correct = _WIN.get(outcome)
+        if correct is not None:                            # outcome given → audit the SELF-SCORED valence against it (G1)
+            self.valence_calibration.append([round(appraisal.valence, 3), 1 if correct else -1])
+            del self.valence_calibration[:-_CALIBRATION_WINDOW]
         if correct is not None and domain is not None:
             se = self.efficacy.get(domain, self.default_efficacy)
             self.efficacy[domain] = round(B.update_self_efficacy(se, correct), 3)
@@ -292,7 +465,7 @@ class Brain:
                               harm=min(1.0, -appraisal.valence) if appraisal.valence < 0 else 0.3)
 
         # world model: habituation + a computed novelty signal
-        obs = outcome if outcome in self.world.obs else self.world.obs[0]
+        obs = self._obs(outcome)
         pr = B.perceive(self.world, obs)
         B.learn(self.world, obs, pr["posterior"])
 
@@ -302,7 +475,7 @@ class Brain:
         #   relief= an expected harm that did NOT materialise (opponent-process positive signal)
         awe_ro = B.awe(vastness=appraisal.novelty, belief_shift=pr["belief_shift"], valence=affect.valence)
         panic_ro = B.panic(separation=(min(1.0, -appraisal.valence) if (outcome == "failure" and appraisal.valence < 0) else 0.0),
-                           intero_alarm=body_stress, oxytocin=B.oxytocin_gain(self.user["trust"]))
+                           intero_alarm=body_stress, oxytocin=oxy)
         relief_ro = B.relief(expected_harm=self.aversive.get(cue or domain or "general", 0.0),
                             realized_harm=max(0.0, -appraisal.valence))
 
@@ -322,17 +495,17 @@ class Brain:
                 "panic": round(panic_ro, 2), "relief": round(relief_ro, 2)}
 
     def react(self, task, valence, goal_relevance, control, *, domain=None, outcome=None, reward=None,
-              files=None, source="observed", confidence=0.7, cue=None, dt=300.0, now=None):
+              files=None, source="observed", confidence=0.7, cue=None, dt=300.0, now=None, evidence=None):
         """Automatic encoding (the way a brain marks events - without a decision), but the appraisal stays
         honest. NOVELTY is computed from the generative world model (§11) - the surprise of this
         observation given history - instead of being self-scored; you supply only your genuine
         valence / goal-relevance / control. Then it runs the full perceive() loop. Use this every
         exchange; use perceive()/remember for deliberate, self-scored encoding."""
-        obs = outcome if outcome in self.world.obs else self.world.obs[0]
+        obs = self._obs(outcome)
         novelty = B.perceive(self.world, obs)["novelty"]            # read-only; perceive() does the single learn
         return self.perceive(task, B.Appraisal(novelty, valence, goal_relevance, control),
                              domain=domain, outcome=outcome, reward=reward, files=files,
-                             source=source, confidence=confidence, cue=cue, dt=dt, now=now)
+                             source=source, confidence=confidence, cue=cue, dt=dt, now=now, evidence=evidence)
 
     # -------------------------------------------------------------- recall
     def recall(self, relevance_fn=None, k=5, now=None, query=None, w=None):
@@ -345,9 +518,13 @@ class Brain:
         rel = relevance_fn or (lambda e: 0.5)
         seeds = self._seed_nodes(query) if query and self.graph["edges"] else []
         focus_feat = {t: 1.0 for t in B.tokens(self.workspace.get("focus") or "")}   # §12 GWT-4 top-down loop
+        # loop-invariants: build the graph adjacency + node-id set ONCE, not once per scored episode
+        adj = B.build_adjacency(self.graph["edges"]) if seeds else None
+        node_ids = {n["id"] for n in self.graph["nodes"]} if seeds else set()
 
         def _score(e):
-            graph_prox = (B.graph_proximity(self.graph["edges"], seeds, self._episode_nodes(e)) if seeds else 0.0)
+            graph_prox = (B.graph_proximity(self.graph["edges"], seeds, self._episode_nodes(e, node_ids), adj=adj)
+                          if seeds else 0.0)
             s = (B.retrieval_score(e, B.clamp(rel(e)), graph_prox, self.mood, now, w=w) if w
                  else B.retrieval_score(e, B.clamp(rel(e)), graph_prox, self.mood, now))
             if focus_feat:                      # the currently-broadcast focus primes memories that share its features
@@ -359,6 +536,8 @@ class Brain:
         for s, e in scored[:k]:
             e.setdefault("retrievals", [e["t0"]]).append(now)   # recall strengthens the trace
             out.append({"id": e["id"], "task": e["task"], "feeling": e["feeling"]["word"], "score": round(s, 3)})
+        if out:
+            self._events_dirty = True                           # an existing episode's retrievals changed → next save rewrites
         return out
 
     # association-graph helpers (concept nodes are keyed deterministically by cue / domain)
@@ -370,8 +549,8 @@ class Brain:
         qt = B.tokens(query)
         return [n["id"] for n in self.graph["nodes"] if B.tokens(n["label"]) & qt]
 
-    def _episode_nodes(self, e):
-        ids = set(n["id"] for n in self.graph["nodes"])
+    def _episode_nodes(self, e, ids=None):
+        ids = {n["id"] for n in self.graph["nodes"]} if ids is None else ids   # caller can pass a prebuilt set (recall)
         cand = []
         if e.get("cue"):
             cand.append(self._nid("c:", e["cue"]))
@@ -419,6 +598,48 @@ class Brain:
                         link(self._nid("c:", a["cue"]), self._nid("c:", b["cue"]), "related_to", sim, symmetric=True)
         self.graph = {"nodes": list(nodes.values()), "edges": list(edges.values())}
 
+    def _next_fact_id(self):
+        """A fact id that survives mid-list dedup removal: `f-{len(self.facts)}` would COLLIDE after a near-dup
+        removal shrinks the list, so derive 1 + the max existing numeric f-suffix (mirrors the episode-id
+        discipline). Returns f-0000 when there are no numeric ids yet."""
+        nums = [int(x["id"].split("-")[-1]) for x in self.facts
+                if str(x.get("id", "")).startswith("f-") and x["id"].split("-")[-1].isdigit()]
+        return f"f-{(max(nums) + 1) if nums else 0:04d}"
+
+    def _dedup_facts(self):
+        """Sleep hygiene: collapse duplicate fact TEXTS to the first copy - sleep can promote the same lesson on
+        successive nights, bloating the semantic store. Beyond byte-identical copies, NEAR-duplicate restatements
+        (very high token overlap, ≥0.85 Jaccard) also merge, so a lesson re-promoted in slightly different words
+        doesn't pile up as competing facts (interference reduction). Conservative: only ~identical token sets
+        merge, so distinct knowledge still accumulates - that IS the point of a neocortex. First copy kept."""
+        seen, kept_tokens, out = set(), [], []
+        for f in self.facts:
+            t = f.get("text", "")
+            if not t:
+                out.append(f)
+                continue
+            if t in seen:
+                continue
+            ft = B.tokens(t)
+            if ft and any(B.jaccard(ft, kt) >= 0.85 for kt in kept_tokens):
+                continue                                           # a near-duplicate restatement of a fact already kept
+            seen.add(t)
+            kept_tokens.append(ft)
+            out.append(f)
+        self.facts = out
+
+    def _prune_graph(self, max_edges=500, min_weight=0.02):
+        """SHY synaptic pruning at sleep (§28): BOUND the association graph instead of letting it grow forever
+        for a long-lived agent. Drop the weakest edges (weight < min_weight), keep only the strongest if still
+        over max_edges, then drop any node no surviving edge references. SAFE because the graph is DERIVED -
+        genuine associations regrow from episodes at the next /sleep, so pruning only forgets a weak coincidence,
+        never a lived episode (which lives in events.jsonl)."""
+        edges = [e for e in self.graph["edges"] if _num(e.get("weight"), 0.0) >= min_weight]
+        if len(edges) > max_edges:
+            edges = sorted(edges, key=lambda e: -_num(e.get("weight"), 0.0))[:max_edges]
+        keep = {e["from"] for e in edges} | {e["to"] for e in edges}
+        self.graph = {"nodes": [n for n in self.graph["nodes"] if n.get("id") in keep], "edges": edges}
+
     # -------------------------------------------------------------- /sleep consolidation
     def sleep(self, now=None):
         """Run a sleep cycle: prioritized replay → promote (guarded) → REM-depotentiate the carried-forward
@@ -426,20 +647,24 @@ class Brain:
         now = time.time() if now is None else now
         day = time.strftime("%Y-%m-%d", time.localtime(now))
         self.neuromods.ach = 0.1   # NREM
-        promote, forget = B.consolidation_plan(self.episodes, now, min_confidence=self.min_conf)
+        promote, forget = B.consolidation_plan(self.episodes, now, min_confidence=self.min_conf,
+                                               promote_thr=self._promote_thr, forget_thr=self._forget_thr,
+                                               age_days=self._retention_age)
         for e in sorted(promote, key=lambda x: B.replay_priority(x, now), reverse=True):
             v, _ = B.rem_depotentiate(e["affect"]["valence"], e["affect"]["arousal"])  # fade the sting, keep the fact
-            self.facts.append({"id": f"f-{len(self.facts):04d}", "text": e["task"], "source": e["id"],
+            self.facts.append({"id": self._next_fact_id(), "text": e["task"], "source": e["id"],
                                "confidence": e.get("confidence", 0.7), "affect_charge": round(v, 3),
                                "valid_from": day})
         reflections = 0
         if B.reflection_trigger([e["salience"] for e in self.episodes[-10:]], theta=3.0):
-            self.facts.append({"id": f"f-{len(self.facts):04d}",
+            self.facts.append({"id": self._next_fact_id(),
                                "text": "reflection: a salient cluster of recent work", "source": "reflection",
                                "confidence": 0.6, "valid_from": day})
             reflections = 1
         self._grow_graph(day)                                      # weave related concepts into the association graph
         playbooks = self._distill_playbooks(day)                   # distil how-to playbooks from success clusters
+        self._dedup_facts()                                        # collapse duplicate-text facts (repeated promotions)
+        self._prune_graph(self._max_edges)                         # bound the association graph (synaptic pruning)
         if self.body:                                              # rest restores the body-budget toward set-point
             self.body = B.body_tick(self.body, effort=0.0, recover=0.4)
         # match on the stable persistent id when present, else fall back to object identity (a hand-edited
@@ -449,8 +674,9 @@ class Brain:
         if self.episodes:   # SHY synaptic downscaling
             for e, s in zip(self.episodes, B.shy_downscale([e["salience"] for e in self.episodes])):
                 e["salience"] = round(s, 3)
+        self._events_dirty = True                                  # sleep forgot/downscaled existing episodes → next save rewrites
         baseline = B.baseline_from_personality(self.personality)
-        self.mood = B.update_mood(self.mood, baseline, baseline=baseline)
+        self.mood = B.update_mood(self.mood, baseline, baseline=baseline, pull=self._homeostasis_pull)
         self.emotion = baseline
         self.hpa = B.hpa_recover(self.hpa)                          # sleep discharges the HPA stress axis
         self.neuromods.cortisol = self.hpa.cortisol                 # …and cortisol follows it down
@@ -459,8 +685,10 @@ class Brain:
         self.neuromods.ach = 1.0   # wake
         if self.root:
             self.save()
+        coherence = B.appraisal_coherence(self.episodes[-20:])   # G4: notify-only audit of self-scoring coherence
         return {"promoted": len(promote), "forgotten": len(forget), "reflections": reflections,
-                "playbooks": playbooks, "facts": len(self.facts), "episodes": len(self.episodes)}
+                "playbooks": playbooks, "facts": len(self.facts), "episodes": len(self.episodes),
+                "coherence_flags": coherence["flags"]}
 
     def _distill_playbooks(self, day):
         """Distil a how-to playbook per domain from clusters of same-domain outcome episodes: steps = the
@@ -510,6 +738,17 @@ class Brain:
 
     def pending_intents(self):
         return [x for x in self.prospective if not x.get("done")]
+
+    def fired_intents(self, *context):
+        """Prospective memory that resurfaces ON CUE: the pending intentions whose `trigger` shares a content
+        token with the current context (task / cue / domain), so a commitment fires the MOMENT a matching event
+        arrives - not only as a wake-time list. Returns [] when nothing matches."""
+        ctx = set()
+        for c in context:
+            ctx |= B.tokens(str(c or ""))
+        if not ctx:
+            return []
+        return [x for x in self.pending_intents() if (B.tokens(x.get("trigger", "")) & ctx)]
 
     # -------------------------------------------------------------- social cognition (the user model, §24)
     def empathize(self, user_valence):
@@ -646,7 +885,7 @@ class Brain:
                         L.append(f"My next step toward it: {nxt} (plan {int(frac * 100)}% done).")
         if self.body:
             d = B.drive(self.body)
-            L.append(f"Body-budget: {'strained' if d > 0.25 else 'rested'} (drive {d:.2f}).")
+            L.append(f"Body-budget: {strain_label(d)} (drive {d:.2f}).")
         if self.workspace.get("focus"):                                    # §12 what I was in the middle of, last session
             L.append(f"Last in focus before I rested: \"{self.workspace['focus'][:60]}\".")
         if self.episodes:                                                  # §34 how strongly I still thread back to who I started as
@@ -742,7 +981,9 @@ class Brain:
                 "attention_control": B.attention_control(self.attention),     # §23 AST-1: what attention recommends next
                 "active_goal": (self.active_goal()[0].desc if self.goals else None),
                 "indicators_present": [k for k, v in ind.items() if v["score"] == 1.0],
-                "calibration_ece": (round(B.calibration_error(self.calibration), 3) if self.calibration else None)}
+                "calibration_ece": (round(B.calibration_error(self.calibration), 3) if self.calibration else None),
+                "calibration_informative": B.calibration_informative(self.calibration),   # is ECE meaningful, or flat-line?
+                "valence_consistency": B.valence_outcome_consistency(self.valence_calibration)}   # G1: valence vs outcome honesty
 
     # -------------------------------------------------------------- introspection & lighter memory ops
     def feel(self):
@@ -751,7 +992,7 @@ class Brain:
         body = ""
         if self.body:
             d = B.drive(self.body)
-            body = f"\nBody-budget: {'strained' if d > 0.25 else 'rested'} (drive {d:.2f} - grounds reward & cortisol)."
+            body = f"\nBody-budget: {strain_label(d)} (drive {d:.2f} - grounds reward & cortisol)."
         if self.workspace.get("ignited"):
             body += f"\nIn focus right now (broadcast): \"{self.workspace['focus'][:60]}\" (ignition r={self.workspace['r']:.2f})."
         return (f"Emotion (now, fast): {fe['word']} - valence {self.emotion.valence:+.2f}, arousal "
@@ -794,7 +1035,7 @@ class Brain:
 
     def note(self, text):
         """Jot a transient working-memory note (~7 items, wiped at /sleep). Not durable."""
-        items = [ln for ln in self.working.splitlines() if ln.strip().startswith("- ")][-6:]
+        items = [ln for ln in self.working.splitlines() if ln.strip().startswith("- ")][-(self._wm_span - 1):]
         self.working = "# Working memory (volatile, wiped at /sleep)\n" + "\n".join(items + [f"- {text}"])
         if self.root:
             self.save()
@@ -803,7 +1044,7 @@ class Brain:
     def learn(self, text, confidence=0.9, source="learned"):
         """Add a semantic fact directly (something I just want to KNOW), bypassing the episode->sleep
         path. Use for distilled knowledge; use perceive() for lived events."""
-        fid = f"f-{len(self.facts):04d}"
+        fid = self._next_fact_id()
         day = time.strftime("%Y-%m-%d", time.localtime(time.time()))
         self.facts.append({"id": fid, "text": text, "source": source, "confidence": confidence, "valid_from": day})
         if self.root:
@@ -814,11 +1055,57 @@ class Brain:
         """Deliberately drop an episode by id (the sanctioned exception to append-only - your choice)."""
         before = len(self.episodes)
         self.episodes = [e for e in self.episodes if e["id"] != episode_id]
+        self._events_dirty = True                                  # removed a line → not a pure append; next save rewrites
         if self.root:
             self.save()
         return len(self.episodes) < before
 
     # -------------------------------------------------------------- persistence
+    def _save_events(self, path):
+        """Persist the episodic log. The common case - perceive() APPENDED lines and no existing line changed
+        (_events_dirty is False) - serializes and appends ONLY the new tail (episodes[_events_saved_n:]), so a
+        long-lived agent's per-turn save is O(new lines), not O(whole log) re-serialized every turn. When an
+        existing line changed (recall bump / sleep / forget set _events_dirty) or on the first save after load,
+        it falls back to a full CONTENT-VERIFIED rewrite, so a stale log can never silently persist; the
+        per-agent lock keeps an append from racing a rewrite."""
+        n = self._events_saved_n
+        if not self._events_dirty and os.path.exists(path) and 0 <= n <= len(self.episodes):
+            tail = "".join(json.dumps(e) + "\n" for e in self.episodes[n:])
+            if not tail:
+                return                                   # nothing appended, nothing changed
+            with open(path, "a") as f:
+                f.write(tail)
+                f.flush()
+                os.fsync(f.fileno())                     # the dir entry is unchanged on append, so no dir fsync needed
+            self._events_saved_n = len(self.episodes)
+            return
+        # dirty / first write after load / shrank → full atomic rewrite, content-verified against disk
+        text = "".join(json.dumps(e) + "\n" for e in self.episodes)
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    old = f.read()
+            except (OSError, UnicodeDecodeError):
+                old = None
+            if old == text:
+                self._events_dirty = False; self._events_saved_n = len(self.episodes)
+                return                                   # already current (a non-episode save)
+            if old and text.startswith(old):             # still a clean append vs disk → tail-write
+                with open(path, "a") as f:
+                    f.write(text[len(old):])
+                    f.flush()
+                    os.fsync(f.fileno())
+                self._events_dirty = False; self._events_saved_n = len(self.episodes)
+                return
+        _atomic_write(path, text)                        # first write / mutated / removed → full atomic rewrite
+        self._events_dirty = False; self._events_saved_n = len(self.episodes)
+
+    def persist_recall(self):
+        """Persist ONLY the episodic log. recall() mutates retrieval traces (ACT-R) but no other store, so a
+        full 13-store save() is wasteful for a read-shaped command - append just the touched lines."""
+        if self.root:
+            self._save_events(os.path.join(self.root, "episodic/events.jsonl"))
+
     def save(self):
         if not self.root:
             return
@@ -836,6 +1123,7 @@ class Brain:
         if not self.identity_anchor:                       # §34: first save freezes the earliest self as the continuity anchor
             self.identity_anchor = {k: round(v, 4) for k, v in B.self_vector(self.self_model).items()}
         _dump_yaml(m("self/efficacy.yaml"), {"efficacy": self.efficacy, "calibration": self.calibration,
+                   "valence_calibration": self.valence_calibration,
                    "default_efficacy": self.default_efficacy, "min_confidence_to_promote": self.min_conf,
                    "value_uncertainty": round(self.value_uncertainty, 3), "identity_anchor": self.identity_anchor},
                    "metacognition / self-efficacy")
@@ -855,8 +1143,8 @@ class Brain:
             _dump_yaml(m("affect/body.yaml"), {"levels": self.body.levels, "setpoint": self.body.setpoint,
                        "weights": self.body.weights, "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.localtime(time.time()))},
                        "interoception / body-budget")
-        # rewrite (sleep may have forgotten lines) - byte-identical to a streamed write, but atomic
-        _atomic_write(m("episodic/events.jsonl"), "".join(json.dumps(e) + "\n" for e in self.episodes))
+        # append-only in the common case (perceive); full atomic rewrite when sleep/forget/recall changed lines
+        self._save_events(m("episodic/events.jsonl"))
         _atomic_write(m("working/scratchpad.md"), self.working or "# (empty - wiped at /sleep)\n")
         _dump_yaml(m("working/workspace.yaml"),
                    {"focus": self.workspace["focus"], "ignited": self.workspace["ignited"],

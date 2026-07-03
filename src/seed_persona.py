@@ -62,7 +62,9 @@ def seed(root, name="", quiet=False):
     w("semantic/facts.yaml",
       "# Semantic facts - what the agent knows, incl. self-knowledge it wakes up with (§8/§20).\n"
       "facts:\n" + "".join(
-          f"  - {{id: f-{i:04d}, text: \"{t}\", source: self-knowledge, confidence: 0.9, valid_from: 2026-06-19}}\n"
+          # json.dumps(t) -> a YAML-safe double-quoted scalar (same fix as `name` above): a fact edited to
+          # contain a quote/backslash/newline can't break the flow mapping and silently void the whole store.
+          f"  - {{id: f-{i:04d}, text: {json.dumps(t)}, source: self-knowledge, confidence: 0.9, valid_from: 2026-06-19}}\n"
           for i, t in enumerate(SELF_KNOWLEDGE)))
 
     w("affect/state.yaml",
