@@ -2,8 +2,7 @@
 Run: python3 test_cli.py   (or under coverage with the others).
 
 We set BRAIN_HOME to a fresh temp dir BEFORE importing agent (the data home is resolved at import), then
-call agent.main([...]) and capture stdout, so coverage sees agent.py. External-service commands (telegram,
-market) are not exercised here - they need a live token/network and are verified live."""
+call agent.main([...]) and capture stdout, so coverage sees agent.py."""
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "src"))
 
@@ -356,7 +355,7 @@ def test_init_falls_back_to_abs_path_when_launcher_absent():
     d = tempfile.mkdtemp(prefix="brain_init_abs_")
     try:
         os.chdir(d); os.environ["PATH"] = ""                      # brain-llm not findable on PATH
-        out, c = run("init"); assert c == 0                       # no --name → "(active agent: …)" print branch
+        out, c = run("init", "--name", "fresh_abs_agent"); assert c == 0
         assert "agent.py" in open(os.path.join(d, "AGENT-BRAIN.MD")).read()   # falls back to an absolute python call
     finally:
         os.environ["PATH"] = path0; os.chdir(cwd0); shutil.rmtree(d, ignore_errors=True)
@@ -367,7 +366,8 @@ def test_init_is_idempotent_single_file():
     d = tempfile.mkdtemp(prefix="brain_init_sync_")
     try:
         os.chdir(d)
-        run("init"); run("init")                                 # re-init just rewrites the one entry file, no drift
+        out, c = run("init", "--name", "fresh_agent2"); assert c == 0
+        out, c = run("init", "--name", "fresh_agent2"); assert c != 0  # fails because it exists
         entries = [f for f in os.listdir(d) if f.endswith((".md", ".MD"))]
         assert entries == ["AGENT-BRAIN.MD"]                      # exactly one entry file, no vendor duplicates
         body = open(os.path.join(d, "AGENT-BRAIN.MD")).read()
@@ -431,7 +431,7 @@ def test_bare_agent_command_requires_a_name():
 
 def test_version_flag():
     out, c = _call(["--version"])                         # `--version` prints the version and exits 0
-    assert c == 0 and agent.__version__ in out and agent.__version__ == "0.0.2"
+    assert c == 0 and agent.__version__ in out and agent.__version__ == "0.0.3"
 
 
 # ── registry error branches ──────────────────────────────────────────────────────────────────────

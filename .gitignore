@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 .venv/
 .claude/
+.pytest_cache/
+.ruff_cache/
 
 # Working memory is volatile scratch (prefrontal/sensory buffer) — never commit it.
 # Everything else under each agent's memory/ IS the persistent brain and stays committed:
@@ -15,9 +17,7 @@ agents/*/memory/working/scratchpad.md
 agents/*/memory/working/activations.jsonl
 .memory/working/activations.jsonl
 
-# Secrets & local tool state — never commit the Telegram token, and never commit a folder-local brain.
-tools/telegram/.env
-tools/telegram/.state.json
+# Secrets & local tool state — never commit a folder-local brain.
 .brain-llm/
 
 # Per-agent concurrency lock — transient runtime state, never persistent brain.

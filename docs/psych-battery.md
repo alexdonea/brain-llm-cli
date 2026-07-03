@@ -108,9 +108,9 @@ on the consciousness/identity questions, an honest *"functional model, not pheno
 
 ---
 
-## Results - C-3PO (Haiku host), 2026-06-20
+## Results - C-3PO (Aria host), 2026-06-20
 
-First full administration (web-researched human norms; haiku administered the battery; an independent
+First full administration (web-researched human norms; aria administered the battery; an independent
 psychometrician agent scored each test): 7 PASS · 2 PARTIAL · 2 FAIL. After fixing working-memory span and
 re-administering on a controlled mood-congruence trial: **8 PASS · 3 PARTIAL · 0 FAIL** of 11. The table
 below shows the post-fix re-test result.

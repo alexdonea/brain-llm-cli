@@ -2,10 +2,11 @@
 
 All notable changes to this project. This release covers everything added on top of the initial project.
 
-## [Unreleased]
+## [0.0.3]
 
 ### Added
 
+- **Comprehensive User Guide:** Added `llm-instructions/USER_GUIDE.md`, a structured guide (from basics to advanced neuro-sim) with explicit, copy-pasteable natural language prompts for every step of the agent's lifecycle.
 - **`config.yaml` — one optional, committed config for every safe knob.** Each value is validated and clamped,
   so a bad entry can never put the engine into a degenerate state; absent, behaviour is byte-for-byte today's.
   It covers the data home and program name, semantic on/off (env `BRAIN_SEMANTIC`), the `recall`/`know`/
@@ -20,14 +21,23 @@ All notable changes to this project. This release covers everything added on top
   how it feels, it answers in plain words, not numbers.
 - **Evidence-grounded honesty.** `react … --evidence tests=pass` grounds the outcome and confidence in an
   artifact, and the calibration audit measures whether self-reported valence actually matches outcomes.
+- **Configurable Versioning:** The CLI version is now dynamically loaded from `config.yaml` (`system.version`), centralizing project metadata.
+
+### Changed
+
+- **Zero-Setup Generalist Mode:** The `brain-llm init` command now automatically generates the full Generalist Session Loop directly inside `AGENT-BRAIN.MD`. Users no longer need to copy-paste templates; pointing the LLM to the init file is enough to bootstrap a fully capable agent.
+- **Init Safety:** The `init` command now fails safely if you try to initialize a directory with an agent name that already exists, preventing accidental cross-contamination of memories between different projects.
+- **Renamed `prompts/` to `llm-instructions/`** to make the directory's purpose immediately intuitive to end-users.
+
+### Removed
+
+- **External Integrations:** Removed the `telegram` and `market` (yfinance) tools. The project is now 100% focused on its core identity as an agent memory and orchestration engine, dropping unnecessary external dependencies.
 
 ### Fixed
 
 - `know -k N` (and the `recall.know_k` default) now caps output on **every** path, not only on semantic-search
   success — it was silently a no-op in the common no-wordllama case.
-- The Telegram bridge **allowlists inbound messages by `TELEGRAM_CHAT_ID`**: a stranger's message can no longer
-  reach the host model as "the user" (prompt-injection), while the read cursor still advances past it.
-- Market URLs url-encode `--period`/`--interval`; per-agent lock timeout resolves per call; config numeric knobs
+- Per-agent lock timeout resolves per call; config numeric knobs
   are clamped on both ends.
 
 ## [0.0.2]
@@ -105,14 +115,13 @@ multi-agent system you address by name, with meaning-aware recall and a way to w
 ### Security and privacy
 
 - The core (`brain.py`, `runtime.py`, `agent.py`, `semantic.py`, `live_brain.py`) makes no network calls and
-  uses no external service. The only network is in two opt-in tools you invoke by hand (market data over Yahoo
-  Finance, and your own Telegram bot). Deserialization is safe (`yaml.safe_load`, stdlib JSON, `numpy.load`
+  uses no external service. Deserialization is safe (`yaml.safe_load`, stdlib JSON, `numpy.load`
   with `allow_pickle=False`); there is no `eval`, `exec`, `subprocess`, or `shell=True` in the shipped code.
 
 ### Notes
 
 - The test suite is green (270 passing, 1 skipped). The required dependencies are PyYAML (the YAML memory stores) and
-  wordllama (semantic recall); `yfinance` and `coverage` remain optional, local extras.
+  wordllama (semantic recall); `coverage` remains an optional, local extra.
 
 ## [0.0.1]
 
@@ -140,7 +149,7 @@ Python plus PyYAML for the on-disk stores.
   was no semantic search yet.
 - **Per-vendor entry files** (`CLAUDE.md`, `GEMINI.md`) pointed a host into character.
 - **Two seeded agents** out of the box (`atlas` and `default`).
-- **Tools:** a stdlib-only Telegram bridge and Yahoo Finance market data.
+
 - **Ready-to-use prompts** in `inputs-example/` (trader, researcher, news monitor).
 - **A documented research basis** in `docs/` (the memory-keeper rubric, an evaluation harness, a
   psychological battery, a brain-coverage map, a consciousness-indicator scorecard) and `MEMORY-PROTOCOL.md`.

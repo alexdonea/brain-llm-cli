@@ -31,10 +31,9 @@ import semantic                                          # OPTIONAL local semant
 import templates
 from runtime import Brain, research_session, strain_label, _atomic_write
 
-__version__ = "0.0.2"
-
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))   # where the CODE + tools live
 CONFIG = config.load(REPO)                                              # optional <repo>/config.yaml, else {}
+__version__ = str(config.get(CONFIG, "system", "version", "0.0.3"))
 
 
 def _data_home():
@@ -384,7 +383,7 @@ def build_parser():
     prog = PROG
     epilog = (
         "name your agent FIRST so the CLI knows which mind to talk to (there is no active default):\n"
-        f"  {prog} <agent> <command> [args]      e.g.  {prog} haiku wake   ·   {prog} haiku react \"...\" 0.6 0.7 0.6\n"
+        f"  {prog} <agent> <command> [args]      e.g.  {prog} aria wake   ·   {prog} aria react \"...\" 0.6 0.7 0.6\n"
         f"  {prog} --agent <name> <command>      (equivalent form)\n"
         "  agent names are snake_case (name_a, name_b); agent-independent commands (agents, docs, guide, init,\n"
         "  home, protocol) need no agent. semantic search (recall --search, know) needs `pip install wordllama`.\n"
@@ -510,11 +509,6 @@ def build_parser():
     # ⑤ research / admin
     re = cmd("research", "batch-feed a research session from a JSON file of appraised findings")
     re.add_argument("--topic", required=True); re.add_argument("--file", required=True)
-    tg = cmd("telegram", "talk to the user over Telegram (token in tools/telegram/.env)")
-    tg.add_argument("tg_action", choices=["send", "read", "last", "chatid"]); tg.add_argument("text", nargs="*", default=[])
-    mk = cmd("market", "market data via Yahoo Finance (yfinance optional): quote | history | info | news")
-    mk.add_argument("mk_action", choices=["quote", "history", "info", "news"]); mk.add_argument("tickers", nargs="+")
-    mk.add_argument("--period", default="1y"); mk.add_argument("--interval", default="1d"); mk.add_argument("--save", default=None)
     cmd("home", "show where the agent brains live (the data home) - set $BRAIN_HOME to relocate it")
     cmd("reindex", "(re)build the named agent's semantic vector cache from its episodes (optional; recall auto-builds it)")
     lv = cmd("live", "WATCH my mind think - an animated terminal brain: regions light up in real call order, "
@@ -616,19 +610,6 @@ def main(argv=None):
 
     if a.cmd == "guide":
         print(templates.guide(cli=PROG)); return
-    if a.cmd == "telegram":                                   # pragma: no cover  (external service: live Telegram API + token; verified live, not unit-tested)
-        sys.path.insert(0, os.path.join(REPO, "tools", "telegram"))
-        import telegram_bridge as tg
-        tg.main([a.tg_action, *a.text])                       # delegate to the tool's own dispatcher - one source of truth, no divergent copy
-        return
-    if a.cmd == "market":                                     # pragma: no cover  (external service: live Yahoo Finance / yfinance; verified live, not unit-tested)
-        sys.path.insert(0, os.path.join(REPO, "tools", "market"))
-        import market as mk
-        argv = [a.mk_action, *a.tickers, "--period", a.period, "--interval", a.interval]
-        if a.save:
-            argv += ["--save", a.save]
-        mk.main(argv)                                         # delegate to the tool's own dispatcher - one source of truth, no divergent copy
-        return
     if a.cmd == "home":
         src = ("$BRAIN_HOME" if (os.environ.get("BRAIN_HOME") or os.environ.get("BRAIN_LLM_HOME"))
                else "repo checkout" if os.path.isdir(os.path.join(REPO, "agents")) else "~/.brain-llm (default)")
@@ -772,8 +753,9 @@ def main(argv=None):
         name = a.name or getattr(a, "agent", None)            # bake the agent in: --name, or the `<prog> <name> init` prefix
         if name:
             _valid_name(name)                                 # a name becomes agents/<name>/ - guard the path
-            if name not in _list_agents():                    # the agent + all memory live centrally in the CLI's agents/
-                _create_agent(name, name)
+            if name in _list_agents():
+                print(f"agent '{name}' already exists. Pick another name for this project to avoid mixing memories."); sys.exit(1)
+            _create_agent(name, name)
         cli = "brain-llm" if _on_path("brain-llm") else f'python3 "{os.path.join(REPO, "src", "agent.py")}"'
         written = _write_entry_at(cwd, templates.ENTRY_FILE, name or "", cli)
         hint = f"{cli} {name}" if name else cli

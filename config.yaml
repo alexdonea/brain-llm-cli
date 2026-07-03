@@ -12,6 +12,10 @@
 # This file IS committed (it documents the defaults). Your edits travel with it.
 # =============================================================================
 
+# ---- system ------------------------------------------------------------------
+system:
+  version: "0.0.3"                 # The current version of the brain-llm CLI
+
 # ---- session -----------------------------------------------------------------
 # Operator "house rules" surfaced at the foot of every `wake` (session start), so
 # the host model reads them before it acts. Free-form one-liners - edit freely.
