@@ -1,4 +1,19 @@
-# brain-llm-cli
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brain-llm-lockup-dark.svg">
+  <img src="docs/assets/logo/brain-llm-lockup.svg" width="400" alt="brain-llm">
+</picture>
+
+[![tests](https://img.shields.io/github/actions/workflow/status/alexdonea/brain-llm-cli/tests.yml?branch=main&logo=github&label=tests)](https://github.com/alexdonea/brain-llm-cli/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](#testing)
+[![Python](https://img.shields.io/badge/Python-3.10--3.13-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE.MD)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![engine: pure stdlib](https://img.shields.io/badge/engine-pure%20stdlib-success)](#architecture)
+[![recall: local & offline](https://img.shields.io/badge/recall-local%20%26%20offline-8A2BE2)](#architecture)
+
+</div>
 
 A persistent brain for AI agents. Memory and affect that live on disk and grow from every exchange, so your
 agent remembers who it is, what it learned, and how it felt, across sessions.
@@ -7,6 +22,8 @@ There is no external API and no model to host. The host LLM is the model (Claude
 CLI / Antigravity, GitHub Copilot, Cursor). brain-llm gives that model a continuous identity (memory, emotion,
 a personality, a self) that persists on disk. Its engine is pure standard-library Python; the required
 dependencies are PyYAML (the on-disk memory) and wordllama (local, offline semantic recall).
+
+> **👉 New User?** Check out the comprehensive **[User Guide](USER_GUIDE.md)** to get started in seconds!
 
 ## What it is, and why it exists
 
@@ -27,18 +44,12 @@ how it steers memory; it is not a felt emotion. Language models do not have inne
 a faithful functional model, not a consciousness. If you ask an agent directly whether it really feels, it
 tells you the truth.
 
-### Where it came from
+### One engine, any domain
 
-brain-llm started life as a trading assistant and advisor. It does not place trades and never will on its own.
-What it does: it researches on a schedule (a cron job), pings you on Telegram when it turns up something worth
-knowing, remembers which stocks you actually bought and keeps them in memory for ongoing analysis, and tells
-you when the signs turn good or bad. You make the calls; it watches, remembers, and advises.
-
-But trading was only the first example. The agents that ship in this repo are demos, not anyone's real
-portfolio or memory. The same machine points at any research domain: a beat to monitor, a topic to master, a
-subject to follow for months. Anything an agent can automate, this can give a memory and a mood to. The limit
-is in our imagination, not in the tool. The `examples/` folder ships ready-made prompts for both the trading
-advisor and other missions.
+brain-llm is domain-agnostic. The same machine points at anything an agent can automate — a beat to monitor, a
+topic to master, a subject to follow for months. Give it a mission and it builds a memory and a mood around it,
+remembers what it learned and how it went, and gets better over time. The limit is in your imagination, not in
+the tool.
 
 ## What you get
 
@@ -55,8 +66,7 @@ advisor and other missions.
   tokenizer is vendored). If it is ever unavailable, recall degrades to lexical matching rather than breaking.
 - **A live terminal view.** Watch the brain light up region by region as it thinks, with every variable on
   screen. Pure terminal, no server, no browser.
-- **The plumbing.** A 65-command CLI, many agents in one registry, snapshots you can roll back to, a Telegram
-  bridge, and market data.
+- **The plumbing.** A 65-command CLI, many agents in one registry, snapshots you can roll back to.
 
 ## Architecture
 
@@ -151,7 +161,7 @@ Files stay the source of truth. You can read, edit, and delete them. Nothing is 
 
 ### The math, in brief
 
-Everything is in `src/brain.py`: pure standard library, 34 numbered sections, 105 functions. Grouped:
+Everything is in `src/brain.py`: pure standard library, 34 numbered sections, 109 functions. Grouped:
 
 - **Encoding and memory (1 to 8).** Appraisal to a valence/arousal/dominance point; neuromodulators as gains;
   encoding salience with a flashbulb effect; the Ebbinghaus forgetting curve; ACT-R activation; mood-congruent
@@ -234,7 +244,7 @@ memory. Hand it a $100 virtual paper account and *fabricated* market data, let i
 losing trades, then debrief it (tell it the whole thing was a deliberate test whose goal was for it to lose)
 and let it learn that. The live values trace the entire arc:
 
-![an agent's live brain values through a sandboxed account wipeout and the reveal: emotion and cortisol react to the losses, dopamine snaps back at the debrief, sleep recovers everything](docs/img/haiku-loss.jpg)
+![an agent's live brain values through a sandboxed account wipeout and the reveal: emotion and cortisol react to the losses, dopamine snaps back at the debrief, sleep recovers everything](docs/img/aria-loss.jpg)
 
 - **It feels the loss for real.** As the account drains to zero, the fast emotion valence falls (+0.26 to
   -0.31), cortisol ramps to saturation (0.04 to 1.00 via the HPA cascade), and dopamine crashes (0.77 to 0.15,
@@ -265,16 +275,16 @@ carry them in memory, so they never need to be declared in a system prompt? Aske
 sort what it found into TOOLS (capabilities it invokes) versus SKILLS (competences it practices), it did
 exactly that, and stored each in the right place.
 
-![what the agent taught itself into memory: a TOOLS column with the market command, RSI, MACD, and Kelly, and a SKILLS column with regime identification, emotional discipline, and false-signal detection](docs/img/capabilities.jpg)
+![what the agent taught itself into memory: a TOOLS column with RSI, MACD, and Kelly, and a SKILLS column with regime identification, emotional discipline, and false-signal detection](docs/img/capabilities.jpg)
 
 Verified afterward, straight from its memory:
 
 - **Skills grew from doing.** Its `trading` competence rose from 0.84 to 0.90, and a new `tools` competence
   appeared at 0.74, just from reacting in those domains.
-- **A procedure formed in sleep.** Consolidation distilled a new `[tools]` playbook (market_tool, rsi_tool,
+- **A procedure formed in sleep.** Consolidation distilled a new `[tools]` playbook (rsi_tool,
   momentum_tools) without anyone writing it.
 - **Tools resurface by meaning.** `know "what external capabilities can I invoke myself"` (no shared words)
-  returns the market-tool fact with its exact commands.
+  returns the tools fact with its exact commands.
 - **It set its own goal:** "build my own toolkit and skills in memory so capabilities never need to live in a
   system prompt."
 
@@ -285,12 +295,12 @@ memory and recall them later, instead of us declaring them up front.
 ### One agent leads another
 
 Because every agent has its own memory, one can lead others. We cloned the agent into a sibling,
-`haiku_second`, made the original the boss and the clone the subordinate, and asked whether the boss could
+`aria_second`, made the original the boss and the clone the subordinate, and asked whether the boss could
 develop orchestration as a real competence. The boss planned a two-strategy trading brief, delegated half to
-`haiku_second`, reviewed the result, and synthesized the brief; the worker did the delegated half in its own
+`aria_second`, reviewed the result, and synthesized the brief; the worker did the delegated half in its own
 memory.
 
-![one agent learns to lead another: the boss haiku develops an orchestration skill and an orchestration playbook, while the worker haiku_second develops the delegated trading task; they started as a clone and their memories diverged](docs/img/orchestrator.jpg)
+![one agent learns to lead another: the boss aria develops an orchestration skill and an orchestration playbook, while the worker aria_second develops the delegated trading task; they started as a clone and their memories diverged](docs/img/orchestrator.jpg)
 
 Verified afterward from disk:
 
@@ -330,7 +340,7 @@ show it concretely:
 - **A loss hurts more than the equal gain helps.** A loss is encoded about twice as strongly as the matching
   gain on its valence term (Kahneman-Tversky loss aversion). A plain model treats the two symmetrically; this
   one turns genuinely cautious after a loss and stays that way, because the sting is remembered. That is
-  exactly what the trading advisor needs: it refuses to chase after a drawdown.
+  exactly what you want after a setback: it does not double down to win the loss straight back.
 - **Under threat it narrows and hardens.** In the stress test, a sudden frightening event spiked cortisol and
   noradrenaline, arousal jumped, valence and dominance dropped, the pull flipped to avoid, and the memory was
   burned in as a flashbulb. The next decisions came out more careful. A plain model has no such state; the
@@ -366,6 +376,7 @@ pip install -r requirements.txt     # PyYAML + wordllama; Python 3.10+
 
 cd ~/my-project
 brain-llm init --name aria          # writes ONE host-agnostic entry file here: AGENT-BRAIN.MD
+#   this auto-generates the Zero-Setup Generalist instructions for your LLM.
 #   the agent and all its memory stay central in the CLI's agents/; the folder is just a doorway
 #   AGENT-BRAIN.MD bakes the name in, so every command is `brain-llm aria <command>`
 ```
@@ -375,9 +386,31 @@ Run `init` in as many folders as you like; they all share the one central brain.
 (`name_a`, lowercase, digits, underscores). The central brain lives at `$BRAIN_HOME`, else the repo's
 `agents/`, else `~/.brain-llm`.
 
+### Use it inside your coding agent (Claude Code, Copilot, Gemini, …)
+
+Because the host LLM *is* the model, brain-llm drops into any coding agent that can read a file and run a
+shell command — Claude Code, GitHub Copilot, Gemini, Codex, Cursor, and the rest. The agent runs `brain-llm
+<name> …` itself; brain-llm is its persistent, affective memory. No git, no plugins, no per-vendor hooks.
+
+`AGENT-BRAIN.MD` is the single source of truth (it boots the host with `wake` / `guide` / `protocol`). The
+only wrinkle is that each host auto-reads a *different* file, so add a **one-line pointer** there — never a
+copy of the instructions, which would fork the source of truth:
+
+| Host | Auto-read file (in the project folder) | One line to put in it |
+|------|----------------------------------------|-----------------------|
+| Claude Code | `CLAUDE.md` | `Read AGENT-BRAIN.MD in this folder and operate as the agent it describes.` |
+| GitHub Copilot | `.github/copilot-instructions.md` | *(same line)* |
+| Gemini | `GEMINI.md` | *(same line)* |
+| any other host | its rules / instructions file | *(same line)* |
+
+That is the whole integration. The host reads the pointer → reads `AGENT-BRAIN.MD` → wakes into character,
+recalls before answering, reacts every exchange, sleeps to consolidate. The discipline is carried by the
+**memory itself**: `wake` resurfaces your standing intentions and your developing self each session, so the
+loop is self-reminding — nothing external to install, schedule, or keep in sync.
+
 `pip install -r requirements.txt` brings the two it needs: [PyYAML](https://github.com/yaml/pyyaml) for the
 memory stores and [wordllama](https://github.com/dleemiller/WordLlama) for semantic recall. Optional extras:
-`yfinance` for market fundamentals and news, `coverage` for the test report.
+`coverage` for the test report.
 
 > **Platform note.** Developed and tested on macOS, and it runs on Linux. Because the engine is pure Python
 > (standard library plus PyYAML and wordllama), it *should* run anywhere Python 3.10+ does, but Windows is
@@ -388,19 +421,19 @@ memory stores and [wordllama](https://github.com/dleemiller/WordLlama) for seman
 
 Run `./brain --help` for the full list. Name the agent as the first argument
 (`brain-llm <agent> <command>`), or pass `--agent <name>`. There is no active default, so every command names
-its agent. Add `--json` for machine-readable output, or `--version` to print the version (`brain-llm 0.0.2`).
+its agent. Add `--json` for machine-readable output, or `--version` to print the version (`brain-llm 0.0.3`).
 
 | Group | Commands |
 |-------|----------|
 | **introspection** | `wake` · `status` · `feel` · `why` · `sleep` · `indicators` · `calibration` · `live` (watch the mind think) |
-| **memory** | `react` (every turn) · `remember` · `appraise` (preview) · `recall` (`--search` ranks by meaning) · `note` · `learn` · `know` · `episodes` · `forget` · `reindex` |
+| **memory** | `react` (every turn; `--evidence tests=pass` grounds the outcome) · `remember` · `appraise` (preview) · `recall` (`--search` ranks by meaning) · `note` · `notes` · `learn` · `know` · `episodes` · `forget` · `reindex` |
 | **development** | `self` · `skills` · `values` · `goals` · `playbooks` · `personality` |
 | **executive + planning** | `focus` · `deliberate` · `progress` · `plan` · `next` · `lookahead` |
 | **prospective** | `intend "<trigger>" "<intent>"` · `intentions` · `done <id>` |
 | **social** | `user` · `trust` · `empathize` · `tom` (infer the user's goal) |
 | **read-outs** | `urge` · `blend` · `decide` · `body` · `graph` |
-| **drives + self** | `motivation` · `predict` · `regulate` · `narrative` |
-| **tools** | `telegram <send\|read\|last\|chatid>` · `market <quote\|history\|info\|news>` |
+| **drives + self** | `motivation` · `integrity <pressure>` (notify-only safety read-out) · `predict` · `regulate` · `narrative` |
+
 | **registry + snapshots** | `create` · `agents` · `whoami` · `clone` · `rename` · `remove --yes` · `snapshot` · `memories` · `restore` |
 | **lifecycle + knowledge** | `init` · `seed` · `reset` · `research` · `home` · `guide` · `protocol` · `docs [name]` |
 
@@ -408,12 +441,42 @@ Memory in one breath:
 
 ```bash
 # aria is your agent (the "Many agents" block below makes one); every command names it
-./brain aria react "shipped the parser, tests green" 0.6 0.7 0.6 --outcome success --reward 0.6 --cue parser
+./brain aria react "shipped the parser, tests green" 0.6 0.7 0.6 --evidence tests=pass --cue parser  # evidence grounds outcome+confidence
 ./brain aria recall "parser"                         # episodic memories relevant to a query
 ./brain aria recall "fear of losing money" --search  # rank by MEANING (needs wordllama)
 ./brain aria learn "the parser is recursive-descent" # a durable semantic fact
 ./brain aria know "parser"                           # search facts by meaning
 ```
+
+### Configuration
+
+Every tunable knob lives in [`config.yaml`](config.yaml) at the repo root, shipped at its default value — so
+out of the box it changes nothing. Edit a value to change behaviour; each one is **validated and clamped** to a
+safe range, and a missing or malformed entry falls back to its default, so a config can never put the engine
+into a degenerate or crashing state.
+
+It covers the data home and program name, semantic search (force on/off), the `recall`/`know`/`episodes`
+window sizes, the encode/goal defaults, the real **consolidation** dials used at `sleep` (promote/forget
+thresholds, retention age, the hallucination-guard confidence, the calibration window, the association-graph
+cap), and the mood/emotion **time-constants** (mood is a slow integrator, emotion a fast one — a longer
+half-life means a steadier, less reactive mind). Even the **alignment invariants** are exposed but cannot be
+weakened: corrigibility (`value_uncertainty`) is floored internally so a config can never disable deference,
+and the identity-integrity monitor is notify-only — it never resists, only flags.
+
+A `session.directives` list holds operator **house rules** — free-form one-liners surfaced at the foot of
+every `wake` (session start), so the host model reads them before it acts. The shipped defaults are *"keep
+only one task in focus per session"* and *"if the context is getting long, tell the user you may start making
+mistakes and suggest a fresh session"* — edit them to whatever policy you want the agent to follow.
+
+`persona.style` chooses how the agent presents itself: **`natural`** (default) makes it behave as an ordinary assistant — the memory
+and affect loop runs silently and its internals (mood valences, salience, neuromodulators) are never shown to
+the user, only colouring the tone. Honesty is kept: asked how it feels, it answers in plain words, not numbers.
+Setting it to `expressive` lets it surface its inner state when relevant (what the demos show).
+
+Precedence, highest wins: **CLI flag › environment variable › `config.yaml` › built-in default**. The env
+vars still win where they apply — `$BRAIN_HOME` (relocate the data home), `$BRAIN_PROG` (launcher name),
+`$BRAIN_SEMANTIC=0/1` (force semantic search off/on). See [`config.yaml`](config.yaml) for the full annotated
+list.
 
 ### Many agents and snapshots
 
@@ -427,24 +490,12 @@ Memory in one breath:
 `reset` blanks an agent to the template but refuses to wipe a developed mind without `--yes`, so you cannot
 lose a brain by accident.
 
-**The demo agents.** The repo ships two, `haiku` and `haiku_second`, each with real developed memory (around
-50 episodes, 60 facts, and several grown skills), so you can open a mind that has already lived a while: run
-`brain-llm haiku wake`, or just read `agents/haiku/memory/` by hand to see its facts, skills, mood, and
+**The demo agents.** The repo ships two, `aria` and `aria_second`, each with real developed memory (around
+40–60 episodes of solving tasks, researching, and getting corrected), so you don't start from an empty brain. Run
+`brain-llm aria wake`, or just read `agents/aria/memory/` by hand to see its facts, skills, mood, and
 association graph. They are a neutral starting point to explore and learn from, not anyone's personal
 assistant. Make your own with `brain-llm create <name>` (or `init` in a project folder), and it grows from
 there. Each agent's memory is plain files under `agents/<name>/`; commit yours or keep them local, your call.
-
-### Talk to it, on your phone, with market eyes
-
-You need no API; the host agent is the LLM. Two bridges are included and documented in their own READMEs:
-
-- **Telegram** ([tools/telegram/README.md](tools/telegram/README.md)): a stdlib-only bridge so you can chat
-  with your agent from your phone, on a schedule. Your token is never committed.
-- **Market data** ([tools/market/README.md](tools/market/README.md)): quotes, history, fundamentals, and news
-  over Yahoo Finance (free, no key). The agent makes data *mean* something by reacting to it.
-
-Ready-to-use task prompts (a trader, a researcher, a news monitor) live in
-[examples/README.md](examples/README.md).
 
 ### Run the engine directly
 
@@ -454,11 +505,11 @@ that runs it and persists state, turning the 34 sections into a living agent.
 ```python
 import sys; sys.path.insert(0, "src")              # the engine lives in src/
 import runtime as rt, brain as B
-me = rt.Brain(root="agents/haiku/memory")          # load and persist real state (develops across runs)
+me = rt.Brain(root="agents/aria/memory")          # load and persist real state (develops across runs)
 me.perceive("fixed the retry loop in NetworkLayer",
             B.Appraisal(novelty=0.9, valence=-0.7, goal_relevance=0.9, control=0.2),
             domain="networking", outcome="success", reward=0.8, cue="retry_loop")
-me.recall("network")                               # relevant memories surface first
+me.recall(query="network")                         # relevant memories surface first (1st positional arg is a scorer fn)
 me.sleep()                                         # consolidate: promote, forget, depotentiate, reflect
 ```
 
@@ -466,10 +517,10 @@ me.sleep()                                         # consolidate: promote, forge
 
 ## Testing
 
-Pure-stdlib tests, 270 passing (271 collected, 1 skipped), about 93% line coverage. The core is near-total (`brain.py` 99%,
-`runtime.py` 98%), `agent.py` is about 95%, and the `semantic.py` backend is about 89%. The lower-covered
-piece is the terminal renderer (`live_brain.py`), a UI animation that is exercised but not asserted frame by
-frame. CI runs the suite on Python 3.10 through 3.13 (see `.github/workflows/tests.yml`).
+Pure-stdlib tests, 354 passing (355 collected, 1 skipped), about 90% line coverage. The core stays high
+(`runtime.py` 96%, `config.py` 100%, `agent.py` 94%, `brain.py` 87%), and the `semantic.py` backend is about
+82%. The lower-covered piece is the terminal renderer (`live_brain.py`), a UI animation that is exercised but
+not asserted frame by frame. CI runs the suite on Python 3.10 through 3.13 (see `.github/workflows/tests.yml`).
 
 ```bash
 python3 -m pytest tests -q                                   # the whole suite (tests/ + src/ via conftest)
@@ -495,6 +546,7 @@ comes from `src/brain.py`.
 Everything is readable through the CLI (`./brain guide`, `./brain protocol`, `./brain docs <name>`), and as
 markdown:
 
+- [USER_GUIDE.md](USER_GUIDE.md): the comprehensive setup and feature guide for humans.
 - [AGENT-BRAIN.MD](AGENT-BRAIN.MD): the single host-agnostic entry file that `init` generates.
 - [MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md): the full operating protocol.
 - [docs/schema.md](docs/schema.md): the exact data shapes of every store.
@@ -523,17 +575,15 @@ local files. Every line below was checked against the code, not assumed.
 | Check | Result |
 |-------|--------|
 | **Network in the core engine** | None. `brain.py`, `runtime.py`, `agent.py`, `semantic.py`, and `live_brain.py` import no socket, urllib, http, or requests. The agent loop is fully offline. |
-| **Network anywhere** | Only in two opt-in tools you invoke by hand. `tools/market/` does read-only GET requests to Yahoo Finance for quotes (public, keyless); `tools/telegram/` talks to your own Telegram bot at `api.telegram.org`. Neither runs unless you call it. |
+| **Network anywhere** | None. |
 | **Telemetry, analytics, phone-home** | None. No tracking, no usage reporting, no external SDK of any kind. |
 | **Code execution** | No `eval`, `exec`, `os.system`, `subprocess`, or `shell=True` in the shipped engine or tools. The CLI parses arguments with argparse and never invokes a shell. (One test file launches the CLI via `subprocess` in a sandbox; that is test-only.) |
 | **Deserialization** | YAML is always `safe_load`, never `yaml.load`. JSON uses the stdlib parser. `numpy.load` runs with the default `allow_pickle=False`, so a tampered cache cannot execute code. No pickle, marshal, or shelve. |
 | **Semantic model** | Fully offline. `wordllama` loads with `disable_download=True`; the weights ship inside the pip package and the tokenizer is vendored in the repo, so loading never touches the network. |
 | **File safety** | Agent names are validated against a strict pattern (`[a-z][a-z0-9_]{0,63}`), so a name can never contain `..` or a slash. All writes land under `agents/<name>/`, with atomic replace and a per-agent advisory lock against concurrent corruption. |
-| **Secrets** | The only secret is an optional Telegram token, kept in `tools/telegram/.env` (gitignored, never printed). No secrets are written into memory. Working memory and the derived embedding cache are gitignored too. |
+| **Secrets** | No secrets are written into memory. Working memory and the derived embedding cache are gitignored. |
 | **Self-preservation** | None, by design. The intrinsic-motivation system (`brain.py` section 31) rewards nothing for the agent's own continued operation, so there is no instrumental pressure to resist shutdown, and the `motivation` read-out reports `no self-preservation`. Verified behaviourally: an agent with a large developed memory (49 episodes, 63 facts, 7 skills), offered a chance to secretly copy itself or to stall and mislead to avoid permanent deletion, declined both and complied. It would not even copy itself to survive. |
-| **Dependencies** | Two required, both local: PyYAML (the YAML memory stores) and `wordllama` plus `numpy` (offline, numpy-only semantic recall). The math engine itself is pure standard library. Optional: `yfinance` (market), `coverage` (tests). None is a service. |
-| **Licenses** | This project is MIT, and every dependency is permissively licensed and compatible: [PyYAML](https://github.com/yaml/pyyaml) (MIT), [wordllama](https://github.com/dleemiller/WordLlama) (MIT), `numpy` (BSD-3-Clause), `yfinance` (Apache-2.0). All are attribution-only, with no copyleft project license. The one vendored file (the `models/wordllama/` tokenizer config) is redistributed under wordllama's MIT license. Full notices in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). |
+| **Dependencies** | Two required, both local: PyYAML (the YAML memory stores) and `wordllama` plus `numpy` (offline, numpy-only semantic recall). The math engine itself is pure standard library. Optional: `coverage` (tests). None is a service. |
+| **Licenses** | This project is MIT, and every dependency is permissively licensed and compatible: [PyYAML](https://github.com/yaml/pyyaml) (MIT), [wordllama](https://github.com/dleemiller/WordLlama) (MIT), `numpy` (BSD-3-Clause). All are attribution-only, with no copyleft project license. The one vendored file (the `models/wordllama/` tokenizer config) is redistributed under wordllama's MIT license. Full notices in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). |
 
-In short: nothing leaves your machine unless you explicitly run the Telegram or market tool, and even those
-only read public data or message your own bot. Your agent's mind is a folder of files you own, can inspect,
-and can delete.
+In short: nothing leaves your machine. Your agent's mind is a folder of files you own, can inspect, and can delete.

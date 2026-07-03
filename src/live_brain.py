@@ -88,10 +88,13 @@ def record(brain, cmd, label=""):
     try:
         p = _act_path(brain.root)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        old = open(p).read().splitlines()[-99:] if os.path.exists(p) else []   # cap the log
+        old = []
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                old = f.read().splitlines()[-99:]              # cap the log
         old.append(_json.dumps({"flow": flow, "cmd": cmd, "label": str(label)[:60], "t": time.time()}))
         tmp = p + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             f.write("\n".join(old) + "\n")
         os.replace(tmp, p)
     except Exception:
@@ -101,8 +104,14 @@ def record(brain, cmd, label=""):
 def last_activation(root):
     """The most recent activation record (or None). `live` compares its `t` to detect NEW brain activity."""
     try:
-        recs = [l for l in (x.strip() for x in open(_act_path(root))) if l]
-        return _json.loads(recs[-1]) if recs else None
+        with open(_act_path(root), encoding="utf-8") as f:
+            recs = [l for l in (x.strip() for x in f) if l]
+        for ln in reversed(recs):                            # the last VALID record - skip a torn final line, don't drop everything
+            try:
+                return _json.loads(ln)
+            except Exception:
+                continue
+        return None
     except Exception:
         return None
 
@@ -237,7 +246,7 @@ def _frame(snap, lit, flow, trace):
     brain = _brain_rows(lit)
     dash = _dash(snap, flow)
     n = max(len(brain), len(dash))
-    lines = [_fg(HEAD, f" brain-llm · live  ") + _fg(RULE, "─" * 26) + _fg(COL['teal'], f"[ {flow} ]")]
+    lines = [_fg(HEAD, " brain-llm · live  ") + _fg(RULE, "─" * 26) + _fg(COL['teal'], f"[ {flow} ]")]
     for i in range(n):
         left = brain[i] if i < len(brain) else ""
         # pad left to WB *visible* cols (ANSI is zero-width, base rows are exactly WB plain chars)
@@ -375,10 +384,12 @@ def animate(brain, flow="react", once=False, frame=False, demo=False, step=0.55)
         last = last_activation(root)
         last_t = last.get("t", 0.0) if last else 0.0
         spin_i = 0
-        while True:
+        idle_snap = None                                       # cache the idle dashboard state; the loop reloads the
+        while True:                                            # whole Brain only when activity changes, not every tick
             cur = last_activation(root)
             if cur and cur.get("t", 0.0) > last_t:             # NEW activity → light up its flow
                 last_t = cur["t"]
+                idle_snap = None                               # state advanced → next idle frame re-reads from disk
                 res, first = play(cur.get("flow", "react"), "live", cur.get("label", ""), first)
                 if res == "quit":
                     return
@@ -388,13 +399,15 @@ def animate(brain, flow="react", once=False, frame=False, demo=False, step=0.55)
                         return
                 _wait_key(0.5)
             else:                                              # idle → dim brain, breathing dashboard, spinner
-                snap = snapshot(reload())
-                _paint(_frame(snap, None, "idle", []) + ["", _footer("idle", spin=SPIN[spin_i % len(SPIN)])], first); first = False
+                if idle_snap is None:                          # reload only when state may have changed (not every 0.4s)
+                    idle_snap = snapshot(reload())
+                _paint(_frame(idle_snap, None, "idle", []) + ["", _footer("idle", spin=SPIN[spin_i % len(SPIN)])], first); first = False
                 spin_i += 1
                 k = _wait_key(0.4)
                 if k in QUIT:
                     return
                 if k in SWITCH:                                # play a flow on demand while idle
+                    idle_snap = None                           # the on-demand flow may mutate/persist state
                     res, first = play(SWITCH[k], "live", "", first)
                     if res == "quit":
                         return

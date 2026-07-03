@@ -2,7 +2,7 @@
 
 An honest, research-grounded coverage assessment. Method (2026-06-20): web-researched the functional
 systems of the human brain, the neuroscience of self-preservation, what a complete affective-memory model
-includes, and how AI cognitive architectures estimate "brain coverage"; then mapped brain-llm's 30
+includes, and how AI cognitive architectures estimate "brain coverage"; then mapped brain-llm's 34
 `brain.py` sections + runtime stores against that taxonomy.
 
 **Honesty framing.** brain-llm models the *function* of a feeling, remembering, self-regulating mind -

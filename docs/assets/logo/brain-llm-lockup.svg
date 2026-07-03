@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 64" width="360" height="64" fill="none" font-family="&#39;JetBrains Mono&#39;, ui-monospace, monospace">
+  <g transform="translate(8 8)">
+    <line x1="16" y1="14" x2="32" y2="24" stroke="#0d1117" stroke-width="3" stroke-linecap="round"></line>
+    <line x1="16" y1="34" x2="32" y2="24" stroke="#0d1117" stroke-width="3" stroke-linecap="round"></line>
+    <circle cx="16" cy="14" r="3.5" fill="#0d1117"></circle>
+    <circle cx="16" cy="34" r="3.5" fill="#0d1117"></circle>
+    <circle cx="32" cy="24" r="3.5" fill="#0d1117"></circle>
+    <rect x="37" y="18" width="6" height="12" rx="1.2" fill="#1f6feb"></rect>
+  </g>
+  <text x="68" y="42" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#0d1117">brain<tspan fill="#0d1117" opacity="0.5">-llm</tspan><tspan fill="#1f6feb">_</tspan></text>
+</svg>
