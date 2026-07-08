@@ -52,8 +52,9 @@ Run these eight steps, in order, on every task. Score only the four appraisal ax
    cached at `.memory/episodic/embeddings.npy` (derived, rebuilt by `reindex`). The SAME backend powers
    `know` (search the semantic FACTS by meaning, cached at `.memory/semantic/embeddings_facts.npy`),
    `recall --search` (relevance-first), and the gut-feel in `decide`; `sleep` refreshes both indexes.
-   Fully local & offline (model vendored at `models/wordllama/`, no download). Without it, all fall back
    to lexical - nothing breaks.
+   
+   **Semantic Tagging Best Practice:** When using `learn` to encode facts, ALWAYS prepend a context tag to the fact (e.g., `learn "[User Profile] User is named James Bond"` or `learn "[Project X] Requires Python 3.10"`). This drastically improves semantic search recall (via `wordllama`) during `wake` or `know` queries.
 
    **1b. ACCESS - global workspace (optional, the "consciousness layer").**
    Pool the candidates (retrieved memories ∪ the current event ∪ active intentions) and run

@@ -240,6 +240,69 @@ def dense_relevance(query, ids, matrix, home):
     return {i: float((c + 1.0) / 2.0) for i, c in zip(ids, sims)}
 
 
+def compact_text(text: str, ratio: float, home: str) -> str:
+    """Extractive summarization: pick the top `ratio` of sentences that best match the overall document's meaning."""
+    if not available() or not text.strip():
+        return text
+    import re
+    import numpy as np
+    # simple sentence split
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    if len(sentences) <= 1:
+        return text
+    
+    k = max(1, int(len(sentences) * ratio))
+    if k >= len(sentences):
+        return text
+
+    doc_emb = embed([text], home)[0]
+    sent_embs = embed(sentences, home)
+    
+    # rank sentences by cosine sim to the full document
+    norms = np.linalg.norm(sent_embs, axis=1)
+    norms[norms == 0] = 1.0
+    sent_embs_norm = sent_embs / norms[:, np.newaxis]
+    
+    doc_norm = np.linalg.norm(doc_emb)
+    doc_norm = doc_norm if doc_norm > 0 else 1.0
+    doc_emb_norm = doc_emb / doc_norm
+    
+    sims = np.dot(sent_embs_norm, doc_emb_norm)
+    top_indices = np.argsort(sims)[-k:]
+    top_indices.sort()
+    
+    return " ".join(sentences[i] for i in top_indices)
+
+
+def semantic_dedup_facts(facts, home, threshold=0.90):
+    """Anthropic-style 'Dreaming': uses dense semantic vectors to find and unify facts that mean 
+    the same thing, even if worded differently (Jaccard would miss them). 
+    Keeps the most recently promoted copy of a redundant fact."""
+    if not is_ready(home) or len(facts) < 2:
+        return facts
+        
+    import numpy as np
+    texts = [f.get("text", "") for f in facts]
+    embs = embed(texts, home)  # already L2-normalized
+    
+    # Cosine similarity matrix
+    sims = np.dot(embs, embs.T)
+    
+    kept = []
+    dropped = set()
+    
+    # Traverse from newest to oldest. If a newer fact is semantically redundant 
+    # with an older fact, we drop the older one (new knowledge overwrites old).
+    for i in range(len(facts) - 1, -1, -1):
+        if i in dropped:
+            continue
+        kept.append(facts[i])
+        for j in range(i):
+            if j not in dropped and sims[i, j] >= threshold:
+                dropped.add(j)
+                
+    return kept[::-1]  # restore original chronological order
+
 if __name__ == "__main__":  # quick self-test against the real brain (run with a venv that has wordllama)
     import sys, time
     home = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
@@ -255,3 +318,28 @@ if __name__ == "__main__":  # quick self-test against the real brain (run with a
         print(f"\n  q: {q!r}")
         for i in top:
             print(f"    {s[i]:.3f}  {tasks[i][:70]}")
+
+def wonder_isolated(ids, matrix, k=3):
+    """
+    Returns the top k most isolated/obscure facts in the semantic graph.
+    Computes node centrality via pairwise cosine similarity (M @ M.T).
+    The lowest row sums indicate the edges of the knowledge graph (isolated islands).
+    """
+    if len(ids) == 0 or matrix is None or len(matrix) == 0:
+        return []
+    import numpy as np
+    
+    # matrix is already L2 normalized. Pairwise cosine similarity:
+    sim = np.dot(matrix, matrix.T)
+    
+    # Sum of similarities for each node (its degree of connectivity)
+    centrality = np.sum(sim, axis=1)
+    
+    # We want the lowest centrality (most isolated)
+    # argsort returns indices from lowest to highest
+    isolated_idx = np.argsort(centrality)
+    
+    # Get top k
+    top_idx = isolated_idx[:k]
+    
+    return [ids[i] for i in top_idx]

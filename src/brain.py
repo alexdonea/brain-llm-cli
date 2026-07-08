@@ -1202,6 +1202,7 @@ class SelfModel:
     competencies: dict
     goals: list
     traits: dict
+    completed_goals: int = 0
 
 
 def self_vector(sm: SelfModel) -> dict:
