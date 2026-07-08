@@ -169,7 +169,7 @@ def test_corrigibility_floor_cannot_be_disabled(monkeypatch, tmp_path):
 def test_session_directives_formatting(monkeypatch):
     monkeypatch.setattr(agent, "CONFIG", {"session": {"directives": ["one task only", "  ", "warn on long context"]}})
     out = agent._session_directives()
-    assert "session directives" in out
+    assert "loaded directives from config.yaml" in out
     assert "- one task only" in out and "- warn on long context" in out
     assert out.count("- ") == 2                                         # blank entry skipped
 

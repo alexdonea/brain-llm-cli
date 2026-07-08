@@ -130,7 +130,7 @@ Load into `SelfModel(competencies, goals, traits)` (+ a parallel list of `Goal` 
 = cosine to the self-vector (self-reference effect); `sense_of_agency(predicted, observed)` → the `control`
 axis; `attention_schema_update(...)` predicts the agent's own focus (AST-1). **Executive control (§29):**
 `select_active_goal(goals, mood)` (guided activation, mood-gated) picks the active goal that biases
-behaviour; `deliberate()` weighs a prepotent impulse against it via `conflict_signal` →
+behaviour; `complete_goal(desc)` removes a finished goal from the hierarchy; `deliberate()` weighs a prepotent impulse against it via `conflict_signal` →
 `expected_value_of_control` → `inhibit` - affect informs but does not dictate action. **Planning (§30):**
 a goal may carry `plan: [{step, done}]`; `subgoal_progress` gives the next step + completion (which drives
 `progress`), and `lookahead` does a one-ply value forward-search over candidate next actions.
@@ -141,6 +141,11 @@ Functional self-report, not felt awareness.
 trust: 0.5                          # relationship trust [0,1] (leaky integrator)
 inferred_goals: {}                  # goal -> posterior (INFERRED, not known)
 inferred_affect: {valence: 0.0}     # estimate of the user's affect
+```
+`social/inbox.yaml` (Multi-Agent message queue)
+```yaml
+messages:
+  - {from: sub_agent, text: "Found 3 bugs", timestamp: 1720341000}
 ```
 `infer_user_goal(goal_utilities)` (Bayesian inverse planning), `empathic_mood_shift(mood, user_valence,
 oxytocin)`, `social_emotion(is_self, praiseworthiness, outcome)` → pride/guilt/gratitude/admiration/anger,
@@ -160,6 +165,8 @@ fades). `source` is the episode id (or `"reflection"` for synthesized clusters).
 (recency + repeated retrieval), not salience alone, so a fresh memory does *not* promote on its first
 night - recall it once or twice before sleeping. `promoted: 0` on a cold first sleep is expected, not a
 bug (reflections still fire on salient clusters).
+
+**"Claude Dreaming" (Semantic Deduplication):** After facts are saved, if `semantic` is enabled, the agent runs an Anthropic-style semantic deduplication step to resolve contradictions and merge identical-meaning facts (Cosine Sim ≥ 0.90) so the store never bloats.
 
 ## Semantic graph (`.memory/semantic/graph.yaml` - neocortex / association cortex)
 ```yaml
@@ -181,8 +188,9 @@ playbooks:
      attempts: 5, successes: 4, strength: 0.62, updated: 2026-06-20}
 ```
 Distilled during `Brain.sleep()` from clusters of same-domain success episodes; `strength` follows the
-power law of practice (`practice_strength`, §28). Distinct from `self/efficacy.yaml` (a scalar belief) -
-this is a concrete, reinforced how-to. Prospective intentions (`prospective/todo.yaml`,
+power law of practice (`practice_strength`, §28). `test_playbook(domain)` checks each step's coverage
+against recent episodes; `audit_playbooks()` flags atrophied, stale, or regressing playbooks. Distinct
+from `self/efficacy.yaml` (a scalar belief) - this is a concrete, reinforced how-to. Prospective intentions (`prospective/todo.yaml`,
 `{id, trigger, intent, created, done}`) are now captured by `Brain.intend()` and resurface at `wake()`;
 the body-budget (`affect/body.yaml`) is ticked each `perceive()`/`react()` and rested at `sleep()`.
 

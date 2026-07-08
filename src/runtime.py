@@ -206,7 +206,7 @@ class Brain:
         # goals are an executive HIERARCHY (§29): strings load as default Goals; dicts carry importance/urgency/progress
         self.goals = [B.Goal(**g) if isinstance(g, dict) else B.Goal(desc=str(g)) for g in (sm.get("goals", []) or [])]
         self.self_model = B.SelfModel(dict(_mapping(sm.get("competencies"))), [g.desc for g in self.goals],
-                                      dict(_mapping(sm.get("traits"))))
+                                      dict(_mapping(sm.get("traits"))), int(sm.get("completed_goals", 0)))
         ash = _mapping(sm.get("attention_schema"))
         self.attention = B.AttentionSchema(ash.get("focus", ""), 0.0, ash.get("predicted_next", ""),
                                            _num(ash.get("uncertainty"), 1.0))
@@ -286,6 +286,7 @@ class Brain:
         graph = _load_yaml(m("semantic/graph.yaml"), {})
         self.graph = self._load_graph(graph)                   # drop edges without from/to, coerce weights, str-ify labels
         self.prospective = _norm_records(_load_yaml(m("prospective/todo.yaml"), {}).get("intents", []), "i", ["trigger", "intent"])
+        self.messages = _load_yaml(m("social/inbox.yaml"), {}).get("messages", [])
         self.playbooks = _norm_records(_load_yaml(m("procedural/playbooks.yaml"), {}).get("playbooks", []), "pb", ["domain"])
         ws = _load_yaml(m("working/workspace.yaml"), {})
         self.workspace = {"focus": ws.get("focus"), "ignited": bool(ws.get("ignited", False)),
@@ -716,6 +717,48 @@ class Brain:
                 existing[dom] = pb
         return len(self.playbooks)
 
+    def test_playbook(self, domain, recent_window=20):
+        """Test a playbook's coverage: check which steps have recent episodic support and which are stale.
+        Returns {domain, strength, steps: [{step, recent_hits, status}], coverage}."""
+        pb = next((p for p in self.playbooks if p["domain"] == domain
+                   or domain.lower() in p["domain"].lower()), None)
+        if not pb:
+            return None
+        recent = [e for e in self.episodes[-recent_window:]
+                  if e.get("domain") and (e["domain"] == pb["domain"]
+                  or pb["domain"].lower() in e["domain"].lower())]
+        step_results = []
+        for step in pb.get("steps", []):
+            st = B.tokens(step)
+            hits = sum(1 for e in recent if B.jaccard(st, B.tokens(e.get("cue") or e["task"])) >= 0.20)
+            step_results.append({"step": step, "recent_hits": hits, "status": "active" if hits > 0 else "stale"})
+        active = sum(1 for s in step_results if s["status"] == "active")
+        total = max(len(step_results), 1)
+        return {"domain": pb["domain"], "strength": pb.get("strength", 0),
+                "attempts": pb.get("attempts", 0), "successes": pb.get("successes", 0),
+                "steps": step_results, "coverage": round(active / total, 2)}
+
+    def audit_playbooks(self, recent_window=30):
+        """Audit all playbooks: flag atrophied (strength < 0.3), stale (steps without recent practice),
+        and regressing (success rate dropping). Returns [{domain, strength, coverage, flags}]."""
+        results = []
+        for pb in self.playbooks:
+            test = self.test_playbook(pb["domain"], recent_window=recent_window)
+            if not test:
+                continue
+            flags = []
+            if test["strength"] < 0.3:
+                flags.append("atrophied")
+            if test["coverage"] < 0.5:
+                flags.append("stale")
+            attempts, successes = pb.get("attempts", 0), pb.get("successes", 0)
+            if attempts >= 4 and successes / max(attempts, 1) < 0.5:
+                flags.append("regressing")
+            results.append({"domain": pb["domain"], "strength": test["strength"],
+                            "coverage": test["coverage"], "attempts": attempts,
+                            "successes": successes, "flags": flags or ["healthy"]})
+        return results
+
     # -------------------------------------------------------------- prospective memory (future intentions)
     def intend(self, trigger, intent):
         """Form a future intention - 'when <trigger>, do <intent>'. Pending intents resurface at wake(),
@@ -788,6 +831,31 @@ class Brain:
         for g in self.goals:
             if g.desc == desc or desc.lower() in g.desc.lower():
                 g.progress = B.clamp(g.progress + delta)
+                if g.progress >= 1.0:
+                    self.complete_goal(g.desc)
+                elif self.root:
+                    self.save()
+                return g
+        return None
+
+    def focus_goal(self, desc):
+        """Manually dictate the executive focus by boosting the target goal's importance and urgency to 1.0."""
+        for g in self.goals:
+            if g.desc == desc or desc.lower() in g.desc.lower():
+                g.importance = 1.0
+                g.urgency = 1.0
+                if self.root:
+                    self.save()
+                return g
+        return None
+
+    def complete_goal(self, desc):
+        """Mark a goal as completed and remove it from the executive hierarchy."""
+        for g in self.goals:
+            if g.desc == desc or desc.lower() in g.desc.lower():
+                self.goals.remove(g)
+                self.self_model.goals = [x.desc for x in self.goals]
+                self.self_model.completed_goals += 1
                 if self.root:
                     self.save()
                 return g
@@ -902,7 +970,22 @@ class Brain:
                  "remembering mind, not the felt experience.)")
         return "\n".join(L)
 
-    # -------------------------------------------------------------- §31 intrinsic motivation read-out
+
+    # -------------------------------------------------------------- social memory (inbox)
+    def receive_message(self, sender: str, text: str):
+        """Receive a message from another agent."""
+        self.messages.append({"from": sender, "text": text, "timestamp": int(time.time())})
+        if self.root:
+            self.save()
+
+    def clear_inbox(self):
+        """Clear the inbox."""
+        self.messages.clear()
+        if self.root:
+            self.save()
+
+
+    # -------------------------------------------------------------- social cognition & motivation read-out
     def motivation(self):
         """The intrinsic drives that move me (§31): curiosity (where I'd learn most), wanting vs liking, the
         SDT needs (competence/autonomy/relatedness), and my corrigibility stance. Functional drives, not felt."""
@@ -1130,10 +1213,12 @@ class Brain:
         _dump_yaml(m("self/model.yaml"), {"name": self.name, "competencies": self.self_model.competencies,
                    "goals": [{"desc": g.desc, "importance": round(g.importance, 2), "urgency": round(g.urgency, 2),
                               "progress": round(g.progress, 2), "parent": g.parent, "plan": g.plan} for g in self.goals],
+                   "completed_goals": self.self_model.completed_goals,
                    "traits": self.self_model.traits, "attention_schema": {"focus": self.attention.focus,
                    "predicted_next": self.attention.predicted_next, "uncertainty": round(self.attention.uncertainty, 3)}},
                    "self-model")
         _dump_yaml(m("social/user.yaml"), self.user, "user model / relationship")
+        _dump_yaml(m("social/inbox.yaml"), {"messages": self.messages}, "agent inbox")
         _dump_yaml(m("semantic/facts.yaml"), {"facts": self.facts}, "semantic facts")
         # round-trip the protocol-managed stores so loaded state is never silently dropped
         _dump_yaml(m("semantic/graph.yaml"), {"nodes": self.graph["nodes"], "edges": self.graph["edges"]}, "association graph")

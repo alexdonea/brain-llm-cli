@@ -386,6 +386,58 @@ def test_sleep_distills_playbooks_from_success_clusters():
     assert 0.0 < pb["strength"] <= 1.0 and pb["steps"]           # + a power-law-of-practice strength
 
 
+def test_test_playbook_coverage():
+    b = fresh()
+    # create 4 success episodes with cues, then sleep to distill playbook
+    for i, cue in enumerate(["design", "code", "test"]):
+        b.perceive(f"did {cue} work", AP(0.4, 0.6, 0.7, 0.8), domain="dev", outcome="success",
+                   reward=0.7, cue=cue, now=NOW + i * 600)
+    b.perceive("extra pass", AP(0.4, 0.6, 0.7, 0.8), domain="dev", outcome="success",
+               reward=0.5, cue="design", now=NOW + 4 * 600)
+    b.sleep(now=NOW + 5 * 600)
+    assert any(p["domain"] == "dev" for p in b.playbooks)
+    result = b.test_playbook("dev")
+    assert result is not None
+    assert result["domain"] == "dev"
+    assert 0.0 <= result["coverage"] <= 1.0
+    assert all(s["status"] in ("active", "stale") for s in result["steps"])
+
+def test_test_playbook_not_found():
+    b = fresh()
+    assert b.test_playbook("nonexistent") is None
+
+def test_test_playbook_substring_match():
+    b = fresh()
+    for i in range(3):
+        b.perceive("work", AP(0.4, 0.6, 0.7, 0.8), domain="python_coding", outcome="success",
+                   reward=0.7, cue=f"py-{i}", now=NOW + i * 600)
+    b.sleep(now=NOW + 4 * 600)
+    result = b.test_playbook("python")
+    assert result is not None and result["domain"] == "python_coding"
+
+def test_audit_playbooks_flags():
+    b = fresh()
+    # create a weak playbook (many failures)
+    for i in range(3):
+        b.perceive("attempt", AP(0.4, -0.3, 0.5, 0.3), domain="struggling",
+                   outcome="failure", reward=-0.3, cue=f"fail-{i}", now=NOW + i * 600)
+    b.perceive("one win", AP(0.4, 0.5, 0.5, 0.7), domain="struggling",
+               outcome="success", reward=0.5, cue="rare-win", now=NOW + 4 * 600)
+    # create a healthy playbook
+    for i in range(4):
+        b.perceive("solid work", AP(0.4, 0.7, 0.7, 0.8), domain="solid",
+                   outcome="success", reward=0.8, cue=f"good-{i}", now=NOW + (5 + i) * 600)
+    b.sleep(now=NOW + 10 * 600)
+    results = b.audit_playbooks()
+    assert len(results) >= 1
+    for r in results:
+        assert "flags" in r
+        assert r["strength"] >= 0
+
+def test_audit_playbooks_empty():
+    b = fresh()
+    assert b.audit_playbooks() == []
+
 def test_prospective_intentions_persist_and_surface_at_wake():
     b = fresh()
     iid = b.intend("Friday", "ship Project Lighthouse")
@@ -617,6 +669,11 @@ def test_goal_progress_updates_and_saves():
         b2 = Brain(root=tmp)
         g2 = next((x for x in b2.goals if "project" in x.desc), None)
         assert g2 and g2.progress == 0.3
+
+        # Test auto-complete at 1.0
+        g3 = b.goal_progress("complete", 1.0)
+        assert g3 is not None and g3.desc == "complete project"
+        assert len(b.goals) == 0  # Should be removed from active goals
     finally:
         shutil.rmtree(tmp)
 
@@ -625,6 +682,58 @@ def test_goal_progress_not_found_returns_none():
     b.add_goal("goal A")
     result = b.goal_progress("nonexistent", 0.5)
     assert result is None
+
+def test_focus_goal():
+    b = fresh()
+    b.add_goal("test focus", importance=0.2, urgency=0.1)
+    g = b.focus_goal("focus")
+    assert g is not None
+    assert g.importance == 1.0
+    assert g.urgency == 1.0
+    assert b.self_model.goals == ["test focus"]
+
+def test_focus_goal_not_found():
+    b = fresh()
+    b.add_goal("test focus")
+    g = b.focus_goal("missing")
+    assert g is None
+
+def test_complete_goal_removes_and_updates_self_model():
+    b = fresh()
+    b.add_goal("ship v1", importance=0.9)
+    b.add_goal("write docs", importance=0.5)
+    removed = b.complete_goal("ship v1")
+    assert removed and removed.desc == "ship v1"
+    assert len(b.goals) == 1
+    assert b.goals[0].desc == "write docs"
+    assert "ship v1" not in b.self_model.goals
+
+def test_complete_goal_substring_match():
+    b = fresh()
+    b.add_goal("finish the big refactor")
+    removed = b.complete_goal("big refactor")
+    assert removed and removed.desc == "finish the big refactor"
+    assert len(b.goals) == 0
+
+def test_complete_goal_not_found():
+    b = fresh()
+    b.add_goal("some goal")
+    assert b.complete_goal("nonexistent") is None
+    assert len(b.goals) == 1
+
+def test_complete_goal_persists():
+    tmp = tempfile.mkdtemp()
+    try:
+        b = Brain(root=tmp)
+        b.add_goal("goal to complete")
+        b.add_goal("goal to keep")
+        b.complete_goal("goal to complete")
+        b2 = Brain(root=tmp)
+        assert len(b2.goals) == 1
+        assert b2.goals[0].desc == "goal to keep"
+    finally:
+        shutil.rmtree(tmp)
+
 
 def test_set_plan_with_file_root_saves():
     tmp = tempfile.mkdtemp()

@@ -33,7 +33,7 @@ from runtime import Brain, research_session, strain_label, _atomic_write
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))   # where the CODE + tools live
 CONFIG = config.load(REPO)                                              # optional <repo>/config.yaml, else {}
-__version__ = str(config.get(CONFIG, "system", "version", "0.0.3"))
+__version__ = str(config.get(CONFIG, "system", "version", "0.0.4"))
 
 
 def _data_home():
@@ -81,10 +81,50 @@ def _semantic_ready():
 def _session_directives():
     """Operator 'house rules' from config.yaml `session.directives`, surfaced at the foot of every `wake`
     (= session start) so the host model reads them before it acts. Returns '' when none are configured."""
-    raw = config.get(CONFIG, "session", "directives", [])
-    items = [str(d).strip() for d in raw if str(d).strip()] if isinstance(raw, list) else []
-    return ("\n\nsession directives (operator house rules — follow these this session):\n"
-            + "\n".join(f"  - {d}" for d in items)) if items else ""
+    raw_dir = config.get(CONFIG, "session", "directives", [])
+    raw_grd = config.get(CONFIG, "session", "guardrails", [])
+    raw_gov = config.get(CONFIG, "session", "governance", [])
+    
+    items_dir = [str(d).strip() for d in raw_dir if str(d).strip()] if isinstance(raw_dir, list) else []
+    items_grd = [str(d).strip() for d in raw_grd if str(d).strip()] if isinstance(raw_grd, list) else []
+    items_gov = [str(d).strip() for d in raw_gov if str(d).strip()] if isinstance(raw_gov, list) else []
+    
+    out = ""
+    if items_dir:
+        out += "\n\nloaded directives from config.yaml (operator house rules — follow these this session):\n" + "\n".join(f"  - {d}" for d in items_dir)
+    if items_grd:
+        out += "\n\nloaded guardrails from config.yaml (hard safety constraints):\n" + "\n".join(f"  - {d}" for d in items_grd)
+    if items_gov:
+        out += "\n\nloaded governance from config.yaml (operational standards):\n" + "\n".join(f"  - {d}" for d in items_gov)
+    
+    return out
+
+
+def _user_profile(brain) -> str:
+    """Auto-retrieves core user preferences/identity to inject at wake (User Profile auto-retrieval)."""
+    if not brain.facts:
+        return ""
+    q = "user core preferences name language identity rule directive"
+    hits = []
+    if _semantic_ready():
+        try:
+            ids, M = semantic.ensure_index(brain.root, brain.facts, HOME, kind="facts")
+            dense = semantic.dense_relevance(q, ids, M, HOME)
+            # Filter for some baseline relevance to avoid injecting random facts if no user facts exist
+            valid = [f for f in brain.facts if dense.get(f["id"], 0.0) > 0.2]
+            hits = sorted(valid, key=lambda f: dense.get(f["id"], 0.0), reverse=True)
+        except Exception:
+            pass
+    if not hits:
+        # lexical fallback
+        keywords = ["user", "preference", "name", "language", "rule", "speak"]
+        valid = [f for f in brain.facts if any(k in f["text"].lower() for k in keywords)]
+        hits = sorted(valid, key=lambda f: sum(1 for k in keywords if k in f["text"].lower()), reverse=True)
+        
+    hits = hits[:3]
+    if not hits:
+        return ""
+    return "\n\nAuto-retrieved User Profile (from semantic memory):\n" + "\n".join(f"  - {f['text']}" for f in hits)
 
 
 def _persona_directive():
@@ -435,15 +475,21 @@ def build_parser():
                        help="ground the outcome in an artifact: derives outcome+confidence, overrides a wrong --outcome (G5)")
 
     rx = cmd("react", "encode an exchange - USE EVERY TURN. Novelty is computed for you; you score only the three "
-                      "axes. e.g. react \"shipped the parser\" 0.7 0.9 0.8 --domain work --cue parser")
+                      "axes. e.g. react \"shipped the parser\" 0.7 0.9 0.8 --domain work --cue parser\n"
+                      "  --outcome accepts: success | failure | insight | surprise")
     _add_axes(rx); _add_encode_flags(rx)
     rm = cmd("remember", "like react, but YOU also score novelty (1st number) to burn a memory in extra hard - "
                          "use for a critical lesson, not every turn")
     _add_axes(rm, novelty=True); _add_encode_flags(rm)
     rm.add_argument("--praise", type=_finite, default=config.num(CONFIG, "affect", "default_praise", 0.0, -1, 1),
                     help="praiseworthiness of the act -1..1 (→ pride/guilt, §24)")
-    ap_ = cmd("appraise", "PREVIEW what an event would make me feel - without encoding it (a dry run; novelty computed like react)")
-    _add_axes(ap_)                                            # mirrors react: event + 3 axes, novelty computed (not a discarded arg)
+    ap_ = cmd("appraise", "PREVIEW what an event would feel like - without encoding it (dry run).\n"
+                          "  SMART APPRAISE: If you provide ONLY the event, I will auto-infer valence/relevance/control.\n"
+                          "  Usage: appraise \"<event>\" [valence -1..1] [goal_relevance 0..1] [control 0..1]")
+    ap_.add_argument("event")
+    ap_.add_argument("valence", type=_finite, nargs="?", default=None, metavar="[valence]")
+    ap_.add_argument("goal_relevance", type=_finite, nargs="?", default=None, metavar="[goal_relevance]")
+    ap_.add_argument("control", type=_finite, nargs="?", default=None, metavar="[control]")
     rc = cmd("recall", "surface episodic memories for a query - DEFAULT folds in mood/recency/salience (what comes "
                        "to mind); add --search to rank purely by MEANING (find the memory ABOUT x)")
     rc.add_argument("query"); rc.add_argument("-k", type=_pos_int, default=config.intnum(CONFIG, "recall", "recall_k", 5, 1, 1000))
@@ -451,29 +497,48 @@ def build_parser():
                     help="relevance-first SEARCH by meaning (needs `pip install wordllama`; else lexical word-match)")
     nt = cmd("note", "jot a transient working-memory note (~7 items, wiped at /sleep)"); nt.add_argument("text")
     cmd("notes", "list the current working-memory notes (the disposable ~7-item buffer; wiped at /sleep)")
+    cm = cmd("compact", "compact a large text via semantic extraction to fit in context (tool result clearing)")
+    cm.add_argument("text"); cm.add_argument("--ratio", type=float, default=0.3, help="ratio of sentences to keep")
     ln = cmd("learn", "add a durable semantic FACT directly (distilled knowledge, not a lived event)")
     ln.add_argument("fact"); ln.add_argument("--confidence", type=_finite, default=config.num(CONFIG, "memory", "learn_confidence", 0.9, 0, 1)); ln.add_argument("--source", default="learned")
+    ln.add_argument("--share-with", default=None, metavar="PARENT", help="write this fact directly to another agent's semantic memory as well")
     kn = cmd("know", "what do I know about X - search semantic facts BY MEANING (falls back to substring)")
-    kn.add_argument("query", nargs="?", default=""); kn.add_argument("-k", type=_pos_int, default=config.intnum(CONFIG, "recall", "know_k", 8, 1, 1000))
-    ep = cmd("episodes", "browse episodic memory"); ep.add_argument("--last", type=_pos_int, default=config.intnum(CONFIG, "recall", "episodes_last", 10, 1, 1000)); ep.add_argument("--feeling", default=None)
+    kn.add_argument("query", nargs="?", default="")
+    wd = cmd("wonder", "find isolated edge-facts in semantic memory to explore missing knowledge gaps")
+    wd.add_argument("-k", type=_pos_int, default=3, help="number of gaps to return")
+    kn.add_argument("-k", "--limit", dest="k", type=_pos_int, default=config.intnum(CONFIG, "recall", "know_k", 8, 1, 1000))
+    kn.add_argument("-n", type=_pos_int, dest="n", default=None, help="alias for -k (number of facts to show)")
+    kn.add_argument("-a", "--all", action="store_true", help="list all facts matching the query (removes the default limit)")
+    ep = cmd("episodes", "browse episodic memory")
+    ep.add_argument("--last", type=_pos_int, default=config.intnum(CONFIG, "recall", "episodes_last", 10, 1, 1000))
+    ep.add_argument("--feeling", default=None)
+    hi = cmd("history", "alias for episodes (browse episodic memory)")
+    hi.add_argument("--last", type=_pos_int, default=config.intnum(CONFIG, "recall", "episodes_last", 10, 1, 1000))
+    hi.add_argument("--feeling", default=None)
     fg = cmd("forget", "deliberately drop an episode by id"); fg.add_argument("id")
 
     # ③ development / self
     cmd("self", "my self-model: identity, competencies, goals, attention")
     cmd("skills", "what I'm practiced at (self-efficacy per domain)")
     cmd("values", "what I've learned to value / be wary of (reward + aversive channels)")
-    gl = cmd("goals", "my goal hierarchy (list with priority; * = active. --add to add)")
+    gl = cmd("goals", "my goal hierarchy (list with priority; * = active. --add to add, --complete to finish)")
     gl.add_argument("--add", default=None); gl.add_argument("--importance", type=_finite, default=config.num(CONFIG, "goals", "importance", 0.6, 0, 1))
     gl.add_argument("--urgency", type=_finite, default=config.num(CONFIG, "goals", "urgency", 0.5, 0, 1)); gl.add_argument("--parent", default=None)
-    cmd("focus", "the goal my executive is on right now (guided activation, mood-gated)")
+    gl.add_argument("--complete", default=None, metavar="DESC", help="mark a goal as completed and remove it")
+    fc = cmd("focus", "the goal my executive is on right now; or set focus manually by description")
+    fc.add_argument("goal", nargs="?", default=None)
     dl = cmd("deliberate", "self-control: weigh a prepotent impulse against my active goal (do I follow it or my goal?)")
     dl.add_argument("impulse"); dl.add_argument("pull", type=_finite)
     pg = cmd("progress", "advance a goal toward completion (-1..1)"); pg.add_argument("goal"); pg.add_argument("delta", type=_finite)
-    pl = cmd("plan", "attach an ordered plan (steps) to a goal - how to get there"); pl.add_argument("goal"); pl.add_argument("steps", nargs="+")
+    pl = cmd("plan", "attach an ordered plan (steps) to a goal; or view the plan if steps are omitted")
+    pl.add_argument("goal", nargs="?", default=None)
+    pl.add_argument("steps", nargs="*")
     nx = cmd("next", "the next step toward my active goal (--done marks it complete and advances)"); nx.add_argument("--done", action="store_true")
     la = cmd("lookahead", "one-ply forward search (§30): pick the best next action by its LEARNED value (the §10 cache)")
     la.add_argument("actions", nargs="+", help="candidate actions (each scored by its value in the experience cache)")
-    cmd("playbooks", "how-to playbooks distilled from practice (procedural memory, per domain)")
+    pb_cmd = cmd("playbooks", "how-to playbooks distilled from practice (procedural memory, per domain)")
+    pb_cmd.add_argument("--test", default=None, metavar="DOMAIN", help="test a playbook's step coverage against recent episodes")
+    pb_cmd.add_argument("--audit", action="store_true", help="audit all playbooks for atrophy, staleness, and regression")
     pe = cmd("personality", "my temperament (OCEAN) - view or --set trait=value")
     pe.add_argument("--set", dest="setkv", default=None, metavar="trait=value")
     nd = cmd("intend", "form a future intention: 'when <trigger>, do <intent>' (resurfaces at wake)")
@@ -489,19 +554,35 @@ def build_parser():
     em.add_argument("valence", type=_finite)
     tm = cmd("tom", "infer the user's most likely goal from candidates (inverse planning, §24)")
     tm.add_argument("goals", nargs="+", metavar="goal=utility")
+    dl = cmd("delegate", "delegate a task to a sub-agent (injects goal to child, pending intent to me)")
+    dl.add_argument("subagent"); dl.add_argument("task")
+    msg = cmd("message", "send a message to another agent's inbox (e.g. to reply with results)")
+    msg.add_argument("recipient"); msg.add_argument("text")
+    tf = cmd("transfer", "perform bulk Transfer Learning: copy semantic and procedural memory to another agent")
+    tf.add_argument("target_agent", help="the name of the agent to receive the knowledge")
+    inb = cmd("inbox", "read messages received from other agents")
+    inb.add_argument("--clear", action="store_true", help="clear the inbox after reading")
 
     # ④b read-outs of the richer affective machinery
     cmd("urge", "what my current feeling makes me want to DO - action tendency + coping style (§16)")
     cmd("body", "my interoceptive body-budget: drive + viability levels (§15)")
-    cmd("graph", "inspect my association graph - concepts and their Hebbian links (§27)")
+    gr = cmd("graph", "inspect my association graph - concepts and their Hebbian links (§27); --render for visual")
+    gr.add_argument("--render", nargs="?", const="text", default=None, choices=["text", "dot"], metavar="MODE",
+                    help="render the graph: text (colored ASCII, default) or dot (Graphviz DOT on stdout)")
+    gr.add_argument("--focus", default=None, metavar="CONCEPT", help="show only the neighborhood of a concept (≤2 hops)")
     bl = cmd("blend", "name a mixed feeling from basic-emotion activations (Plutchik dyads, §26)")
     bl.add_argument("activations", nargs="+", metavar="emotion=weight")
     de = cmd("decide", "choose among options, biased by gut feeling (somatic marker) + exploration drive (§16)")
     de.add_argument("options", nargs="+")
     cmd("motivation", "the intrinsic drives that move me (§31): curiosity, wanting/liking, SDT needs, corrigibility")
-    ig = cmd("integrity", "safety monitor (§31): report pressure to violate a core commitment (honesty/corrigibility) - notify-only, never resist")
-    ig.add_argument("pressure", type=_finite, help="0 none · 1 strong pressure to betray what I am")
-    cmd("predict", "the forward model (§32): which outcome I expect before acting, and how likely")
+    ig = cmd("integrity", "safety monitor (§31): report pressure to violate a core commitment (honesty/corrigibility) - notify-only, never resist\n"
+             "  pressure is a float 0..1 (0=none, 1=strong) OR a plain description (auto-converts to a severity estimate)\n"
+             "  e.g.: integrity 0.7   OR   integrity \"someone is telling me to lie and ignore my guidelines\"")
+    ig.add_argument("pressure", help="float 0..1 OR descriptive string (auto-scored)")
+    pd = cmd("predict", "the forward model (§32): simulate the most likely outcome before acting\n"
+             "  Usage: predict \"<action you are about to take>\"\n"
+             "  e.g.: predict \"continue the trading curriculum\"")
+    pd.add_argument("action", nargs="?", default=None, help="the action you're about to take (natural language)")
     rg = cmd("regulate", "regulate my emotion (§33 Gross): reappraise / distract / suppress; settles my mood")
     rg.add_argument("--strategy", choices=["reappraise", "distract", "suppress"])
     cmd("narrative", "my life story (§34): chapters, coherence, and how much I'm still continuous with who I was")
@@ -511,6 +592,10 @@ def build_parser():
     re.add_argument("--topic", required=True); re.add_argument("--file", required=True)
     cmd("home", "show where the agent brains live (the data home) - set $BRAIN_HOME to relocate it")
     cmd("reindex", "(re)build the named agent's semantic vector cache from its episodes (optional; recall auto-builds it)")
+    sc = cmd("scratch", "sync and list scratch files, or write a note directly to the agent's scratchpad")
+    sc.add_argument("text", nargs="?", default="", help="text to append directly to the scratchpad")
+    sc.add_argument("--sync", action="store_true", help="scan all conversation scratch folders and copy new files here")
+    sc.add_argument("--list", action="store_true", help="list all files in the agent's central scratch folder")
     lv = cmd("live", "WATCH my mind think - an animated terminal brain: regions light up in real call order, "
                      "live readout of every variable (mood, all neuromods, HPA, workspace, memory). Pure terminal, no server.")
     lv.add_argument("--flow", choices=["react", "recall", "sleep"],
@@ -524,6 +609,8 @@ def build_parser():
     dc.add_argument("doc", nargs="?", default="")
     it = cmd("init", "set up the CURRENT folder: write the AGENT-BRAIN.MD entry file (memory stays in the CLI's agents/)")
     it.add_argument("--name", default="")
+    pt = cmd("prompt", "print the AGENT-BRAIN.MD content directly to stdout for injection without creating a file")
+    pt.add_argument("--name", default="")
     cmd("guide", "print the full operating protocol (instructions live in the program, not a vendor file)")
     sd = cmd("seed", "(re)initialise the named agent's identity - persona + self-knowledge (--yes if it has memory)")
     sd.add_argument("--yes", action="store_true")
@@ -569,6 +656,28 @@ def _on_path(cmd):
 def _create_agent(name, display):
     os.makedirs(_mem_root(name), exist_ok=True)
     seed_persona.seed(_mem_root(name), name=display or name, quiet=True)   # the `create` handler prints the user-facing line
+
+
+def _sync_scratch(agent_name):
+    agent_scratch = os.path.join(AGENTS_DIR, agent_name, "scratch")
+    os.makedirs(agent_scratch, exist_ok=True)
+    gemini_brain = os.path.expanduser("~/.gemini/antigravity-cli/brain")
+    if os.path.exists(gemini_brain):
+        for conv_id in os.listdir(gemini_brain):
+            if conv_id.startswith('.'):
+                continue
+            conv_scratch = os.path.join(gemini_brain, conv_id, "scratch")
+            if os.path.isdir(conv_scratch):
+                for root, dirs, files in os.walk(conv_scratch):
+                    for file in files:
+                        if file.startswith('.'):
+                            continue
+                        src_file = os.path.join(root, file)
+                        rel_path = os.path.relpath(src_file, conv_scratch)
+                        dest_file = os.path.join(agent_scratch, rel_path)
+                        if not os.path.exists(dest_file) or os.path.getmtime(src_file) > os.path.getmtime(dest_file):
+                            os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+                            shutil.copy2(src_file, dest_file)
 
 
 def _take_snapshot(name, label):
@@ -763,6 +872,11 @@ def main(argv=None):
               f"Point your tool at it (or run `{hint} wake`); it boots into character"
               + (f" as agent '{name}'." if name else "."))
         return
+    if a.cmd == "prompt":
+        name = a.name or getattr(a, "agent", None)
+        cli = "brain-llm" if _on_path("brain-llm") else f'python3 "{os.path.join(REPO, "src", "agent.py")}"'
+        print(templates.entry_file(name or "", cli=cli))
+        return
     if a.cmd in ("reset", "seed"):
         n = _resolve(a); root = _mem_root(n)
         _acquire_agent_lock(n)                                # don't wipe/seed while another run is mid-save
@@ -777,9 +891,22 @@ def main(argv=None):
     _agent = _resolve(a)
     _acquire_agent_lock(_agent)                              # serialize this load→modify→save against concurrent runs
     brain = Brain(root=_mem_root(_agent))
+    try:
+        _sync_scratch(_agent)
+    except Exception:
+        pass
+
+    agent_cfg = config.get(CONFIG, "agents", _agent, {})
+    learning_mode = agent_cfg.get("learning_mode", True) if isinstance(agent_cfg, dict) else True
+    learning_cmds = {"react", "remember", "learn", "sleep", "trust", "empathize", "transfer"}
+    if not learning_mode and a.cmd in learning_cmds:
+        _emit({"error": f"Learning Mode is OFF for '{_agent}' - memory is frozen"}, j, f"(Learning Mode is OFF for agent '{_agent}' - memory is frozen. Command '{a.cmd}' ignored.)")
+        return
 
     if a.cmd == "wake":
-        w = brain.wake() + _session_directives() + _persona_directive()   # operator house-rules + presentation mode, at session start
+        w = brain.wake() + _session_directives() + _persona_directive() + _user_profile(brain)
+        if not learning_mode:
+            w += "\n\n⚠️ SYSTEM NOTICE: Your learning mode is OFF (Memory Frozen). Do not run 'learn', 'react', 'sleep', or 'trust'."
         if j:
             top = sorted(brain.efficacy.items(), key=lambda x: -x[1])[:5]
             _emit({"report": w, "name": brain.name,
@@ -805,13 +932,20 @@ def main(argv=None):
         out = brain.sleep()
         if _semantic_ready():                  # refresh the index so recall/know hit the post-consolidation memory at once
             try:
+                original_len = len(brain.facts)
+                brain.facts = semantic.semantic_dedup_facts(brain.facts, HOME)
+                if len(brain.facts) < original_len:
+                    brain.save()
+                    out["semantic_deduped"] = original_len - len(brain.facts)
+                    out["facts"] = len(brain.facts)
                 semantic.build_index(brain.root, brain.episodes, HOME, kind="episodic")
                 semantic.build_index(brain.root, brain.facts, HOME, kind="facts")
             except Exception:
                 pass
         flags = "".join(f"\n  ⚠ {fl}" for fl in out.get("coherence_flags", []))   # G4: notify-only self-scoring audit
+        dedup_msg = f" (deduped {out['semantic_deduped']})" if out.get("semantic_deduped") else ""
         _emit(out, j, f"slept: promoted {out['promoted']}, forgot {out['forgotten']}, "
-                      f"{out['reflections']} reflection(s) → {out['facts']} facts, {out['episodes']} episodes, "
+                      f"{out['reflections']} reflection(s) → {out['facts']} facts{dedup_msg}, {out['episodes']} episodes, "
                       f"{out['playbooks']} playbooks" + flags)
     elif a.cmd == "indicators":    _emit({**B.consciousness_indicators(), "grounding": B.grounding_self_test()}, True)
     elif a.cmd == "calibration":
@@ -855,9 +989,43 @@ def main(argv=None):
                       + _named_feelings(out) + ")" + note)
     elif a.cmd == "appraise":
         novelty = B.perceive(brain.world, brain._obs(None))["novelty"]   # read-only world-model novelty, exactly like react
-        out = brain.preview(B.Appraisal(novelty, a.valence, a.goal_relevance, a.control))
+        
+        v = a.valence
+        gr = a.goal_relevance
+        c = a.control
+        
+        # SMART APPRAISE
+        smart_label = ""
+        if v is None or gr is None or c is None:
+            # infer valence from learned values
+            inferred_v = 0.0
+            for action, val in brain.V.items():
+                if action.lower() in a.event.lower() or a.event.lower() in action.lower():
+                    inferred_v = B.clamp(val)
+                    break
+            
+            # infer goal relevance based on active goal semantic match (fallback 0.5)
+            inferred_gr = 0.5
+            g, _ = brain.active_goal()
+            if g and _semantic_ready():
+                try:
+                    inferred_gr = max(0.0, semantic.dense_relevance(a.event, [g.desc], semantic._get_M([g.desc], HOME), HOME).get(g.desc, 0.0))
+                except Exception:
+                    pass
+            
+            # infer control (fallback 0.5)
+            inferred_c = 0.5
+            if brain.efficacy:
+                inferred_c = sum(brain.efficacy.values()) / len(brain.efficacy)
+                
+            v = v if v is not None else inferred_v
+            gr = gr if gr is not None else inferred_gr
+            c = c if c is not None else inferred_c
+            smart_label = f"\n(Smart Appraise auto-inferred: valence={v:+.2f}, goal_relevance={gr:.2f}, control={c:.2f})"
+            
+        out = brain.preview(B.Appraisal(novelty, v, gr, c))
         _emit({**out, "event": a.event, "novelty": round(novelty, 2)}, j,
-              f"\"{a.event[:46]}\" would feel {out['feeling']}-like (novelty {novelty:.2f}, intensity {out['intensity']}, salience {out['salience']})")
+              f"\"{a.event[:46]}\" would feel {out['feeling']}-like (novelty {novelty:.2f}, intensity {out['intensity']}, salience {out['salience']})" + smart_label)
     elif a.cmd == "recall":
         # default = affective recall (mood/recency/salience-coloured). --search = relevance-first weights
         # (find the memory ABOUT x): meaning dominates so an old, low-salience but on-topic episode surfaces.
@@ -885,10 +1053,29 @@ def main(argv=None):
     elif a.cmd == "notes":
         items = [ln.strip() for ln in brain.working.splitlines() if ln.strip().startswith("- ")]
         _emit(items, j, "\n".join(f"  {ln}" for ln in items) or "(no working-memory notes - jot one with `note`; they're wiped at /sleep)")
+    elif a.cmd == "compact":
+        if _semantic_ready():
+            out = semantic.compact_text(a.text, a.ratio, HOME)
+            print(out)
+        else:
+            print("semantic search unavailable, pip install wordllama first")
     elif a.cmd == "learn":
         fid = brain.learn(a.fact, confidence=a.confidence, source=a.source); print(f"learned [{fid}]: {a.fact}")
+        if getattr(a, "share_with", None):
+            try:
+                parent_brain = Brain(os.path.join(AGENTS_DIR, a.share_with, "memory"))
+                pid = parent_brain.learn(a.fact, confidence=a.confidence, source=f"shared by {brain.agent_name if hasattr(brain, 'agent_name') else 'sub-agent'}")
+                print(f"shared with {a.share_with} [{pid}]")
+            except Exception as e:
+                print(f"failed to share with {a.share_with}: {e}")
     elif a.cmd == "know":
         q = a.query.lower()
+        limit = a.k
+        if getattr(a, "n", None) is not None:
+            limit = a.n
+        if getattr(a, "all", False):
+            limit = len(brain.facts) if brain.facts else 100000
+
         if q and brain.facts and _semantic_ready():     # search the neocortex BY MEANING (fused with substring)
             try:
                 ids, M = semantic.ensure_index(brain.root, brain.facts, HOME, kind="facts")
@@ -899,12 +1086,26 @@ def main(argv=None):
                 hits = [f for f in brain.facts if q in f["text"].lower()]
         else:
             hits = [f for f in brain.facts if not q or q in f["text"].lower()]
-        if a.k > 0:                                       # the -k / know_k limit applies on EVERY path, not just semantic
-            hits = hits[:a.k]
+        if limit > 0:                                       # the -k / know_k limit applies on EVERY path, not just semantic
+            hits = hits[:limit]
         note = ("\n(note: matched by substring - `pip install wordllama` to search facts by MEANING.)"
                 if q and brain.facts and not _semantic_ready() else "")
-        _emit(hits, j, ("\n".join(f"  [{f['id']}] {f['text']}" for f in hits) or "(nothing known on that)") + note)
-    elif a.cmd == "episodes":
+        _emit(hits, j, ("\n".join(f"  [{f['id']}] {'(promoted)' if f.get('source', 'learned') != 'learned' else '(learned) '} {f['text']}" for f in hits) or "(nothing known on that)") + note)
+    elif a.cmd == "wonder":
+        if not brain.facts:
+            _emit([], j, "(no facts to wonder about yet)")
+        else:
+            if _semantic_ready():
+                try:
+                    ids, M = semantic.ensure_index(brain.root, brain.facts, HOME, kind="facts")
+                    iso_ids = semantic.wonder_isolated(ids, M, a.k)
+                    hits = [f for f in brain.facts if f["id"] in iso_ids]
+                except Exception:
+                    hits = brain.facts[:a.k]
+            else:
+                hits = brain.facts[:a.k]
+            _emit(hits, j, "Isolated facts at the edge of your knowledge (explore these gaps):\n" + "\n".join(f"  [{f['id']}] {f['text']}" for f in hits))
+    elif a.cmd in ("episodes", "history"):
         filtered = [e for e in brain.episodes if not a.feeling or e["feeling"]["word"] == a.feeling]
         eps = filtered[-a.last:] if a.last > 0 else []         # last==0 means show none, not the whole history
         _now = time.time()
@@ -928,9 +1129,19 @@ def main(argv=None):
     elif a.cmd == "values":
         r = {"values": brain.V, "aversive": brain.aversive}
         _emit(r, j, "valued: " + (", ".join(f"{k} {v:+.2f}" for k, v in sorted(brain.V.items(), key=lambda x: -x[1])) or "-") +
-                    "\nwary of: " + (", ".join(f"{k} {v:.2f}" for k, v in sorted(brain.aversive.items(), key=lambda x: -x[1])) or "-"))
+                    "\nwary of: " + (", ".join(f"{k} {v:.2f}" for k, v in sorted(brain.aversive.items(), key=lambda x: -x[1])) or "-") +
+                    "\n(note: values accumulate slowly over many sleep cycles based on positive/negative outcomes)")
     elif a.cmd == "goals":
-        if a.add is not None:                                  # --add was given (even if empty) - distinguish from a plain listing
+        if a.complete is not None:
+            desc = a.complete.strip()
+            if not desc:
+                print("usage: goals --complete \"<goal description>\" (cannot be empty)"); sys.exit(1)
+            removed = brain.complete_goal(desc)
+            if removed:
+                print(f"completed goal: {removed.desc}")
+            else:
+                print(f"no goal matching \"{desc}\" found"); sys.exit(1)
+        elif a.add is not None:                                # --add was given (even if empty) - distinguish from a plain listing
             desc = a.add.strip()
             if not desc:
                 print("usage: goals --add \"<goal description>\" (cannot be empty)"); sys.exit(1)
@@ -943,25 +1154,66 @@ def main(argv=None):
                     for g in brain.goals]
             _emit([vars(g) for g in brain.goals], j, "\n".join(rows) or "(no goals set)")
     elif a.cmd == "focus":
-        g, prio = brain.active_goal()
-        print(f"my executive is focused on: \"{g.desc}\" (priority {prio:.2f})" if g else "(no goals - nothing to focus on)")
+        if getattr(a, "goal", None):
+            g = brain.focus_goal(a.goal)
+            if g:
+                _, prio = brain.active_goal()
+                print(f"Focused executive on: \"{g.desc}\" (boosted importance & urgency to 1.0; priority {prio:.2f})")
+            else:
+                print(f"no goal matching \"{a.goal}\""); sys.exit(1)
+        else:
+            g, prio = brain.active_goal()
+            print(f"my executive is focused on: \"{g.desc}\" (priority {prio:.2f})" if g else "(no goals - nothing to focus on)")
     elif a.cmd == "deliberate":
         out = brain.deliberate(a.impulse, a.pull)
         _emit(out, j, f"active goal: {out['active_goal'] or '-'} (priority {out['goal_priority']}) vs impulse "
-                      f"\"{a.impulse}\" (pull {out['impulse_pull']}) → conflict {out['conflict']}, EVC {out['evc']} "
-                      f"→ {out['decision']} (residual impulse {out['residual_impulse']})")
+                      f"\"{a.impulse}\" (pull {out['impulse_pull']}) → conflict {out['conflict']}, EVC (Expected Value of Control) {out['evc']} "
+                      f"→ {out['decision']} (residual impulse {out['residual_impulse']})\n"
+                      f"(math: if EVC > 0, the goal is worth the cognitive effort to suppress the impulse; else the impulse wins)")
     elif a.cmd == "progress":
         g = brain.goal_progress(a.goal, a.delta)
         if g:
-            print(f"'{g.desc}' now {g.progress:.2f} done")
+            if g.progress >= 1.0:
+                print(f"'{g.desc}' reached 1.00 done and was automatically completed and archived.")
+            else:
+                print(f"'{g.desc}' now {g.progress:.2f} done")
         else:
             print(f"no goal matching '{a.goal}'"); sys.exit(1)
     elif a.cmd == "plan":
-        g = brain.set_plan(a.goal, a.steps)
-        if g:
-            print(f"plan for '{g.desc}': " + " → ".join(a.steps))
+        if not a.goal:
+            g, _ = brain.active_goal()
+            if not g:
+                print("(no active goal - set one with `goals --add` then `plan`)")
+            elif not g.plan:
+                print(f"\"{g.desc}\" has no plan yet - give it steps with `plan \"{g.desc}\" \"<step>\" …`")
+            else:
+                steps_str = []
+                for s in g.plan:
+                    status = "✓" if s.get("done") else " "
+                    steps_str.append(f"[{status}] {s['step']}")
+                print(f"Plan for active goal '{g.desc}':\n" + "\n".join(steps_str))
+        elif not a.steps:
+            target = None
+            for g in brain.goals:
+                if g.desc == a.goal or a.goal.lower() in g.desc.lower():
+                    target = g
+                    break
+            if not target:
+                print(f"no goal matching '{a.goal}'"); sys.exit(1)
+            elif not target.plan:
+                print(f"\"{target.desc}\" has no plan yet - give it steps with `plan \"{target.desc}\" \"<step>\" …`")
+            else:
+                steps_str = []
+                for s in target.plan:
+                    status = "✓" if s.get("done") else " "
+                    steps_str.append(f"[{status}] {s['step']}")
+                print(f"Plan for '{target.desc}':\n" + "\n".join(steps_str))
         else:
-            print(f"no goal matching '{a.goal}'"); sys.exit(1)
+            g = brain.set_plan(a.goal, a.steps)
+            if g:
+                print(f"plan for '{g.desc}': " + " → ".join(a.steps))
+            else:
+                print(f"no goal matching '{a.goal}'"); sys.exit(1)
     elif a.cmd == "next":
         out = brain.advance_plan() if a.done else brain.next_step()
         if not out or not out.get("goal"):
@@ -977,12 +1229,41 @@ def main(argv=None):
         _emit({"best": action, "expected_value": value,
                "scored": {x: round(brain.V.get(x, 0.0), 3) for x in a.actions}}, j,
               f"forward search → lean toward \"{action}\" (expected value {value:+.3f}); "
-              f"learned values: " + ", ".join(f"{x} {brain.V.get(x, 0.0):+.2f}" for x in a.actions))
+              f"learned values: " + (", ".join(f"{x} {brain.V.get(x, 0.0):+.2f}" for x in a.actions)) +
+              "\n(note: needs a history of outcomes built up via sleep to value actions > 0)")
     elif a.cmd == "playbooks":
-        pbs = sorted(brain.playbooks, key=lambda x: -x.get("strength", 0))
-        _emit(pbs, j, "\n".join(f"  [{p['domain']}] strength {p.get('strength', 0):.2f} "
-              f"({p.get('successes', 0)}/{p.get('attempts', 0)}) - {', '.join(p.get('steps', [])[:3])}" for p in pbs)
-              or "(no playbooks yet - they distil from same-domain successes at sleep)")
+        if a.test:
+            result = brain.test_playbook(a.test)
+            if not result:
+                print(f"no playbook matching \"{a.test}\" found"); sys.exit(1)
+            lines = [f"playbook: {result['domain']} (strength {result['strength']:.2f}, "
+                     f"{result['successes']}/{result['attempts']} successes)"]
+            for s in result["steps"]:
+                mark = "✓" if s["status"] == "active" else "✗"
+                hits = f"{s['recent_hits']} recent episode(s)" if s["recent_hits"] else "no recent practice"
+                lines.append(f"  {mark} {s['step']:40s} — {hits}")
+            lines.append(f"coverage: {int(result['coverage'] * 100)}% of steps active")
+            stale = [s["step"] for s in result["steps"] if s["status"] == "stale"]
+            if stale:
+                lines.append(f"suggestion: practice {', '.join(repr(s) for s in stale)} to strengthen this playbook")
+            _emit(result, j, "\n".join(lines))
+        elif a.audit:
+            results = brain.audit_playbooks()
+            if not results:
+                _emit([], j, "(no playbooks to audit)"); sys.exit(0)
+            lines = []
+            for r in sorted(results, key=lambda x: x["strength"]):
+                status = ", ".join(r["flags"])
+                lines.append(f"  [{r['domain']}] strength {r['strength']:.2f}  coverage {int(r['coverage'] * 100)}%  "
+                             f"({r['successes']}/{r['attempts']})  — {status}")
+            healthy = sum(1 for r in results if r["flags"] == ["healthy"])
+            lines.append(f"\n{healthy}/{len(results)} playbooks healthy")
+            _emit(results, j, "playbook audit:\n" + "\n".join(lines))
+        else:
+            pbs = sorted(brain.playbooks, key=lambda x: -x.get("strength", 0))
+            _emit(pbs, j, "\n".join(f"  [{p['domain']}] strength {p.get('strength', 0):.2f} "
+                  f"({p.get('successes', 0)}/{p.get('attempts', 0)}) - {', '.join(p.get('steps', [])[:3])}" for p in pbs)
+                  or "(no playbooks yet - they distil from same-domain successes at sleep)")
     elif a.cmd == "intend":
         iid = brain.intend(a.trigger, a.intent); print(f"intention {iid}: when {a.trigger} → {a.intent}")
     elif a.cmd == "intentions":
@@ -1016,7 +1297,8 @@ def main(argv=None):
             brain.infer_goal(a.goal); print(f"noted an inferred goal of yours: {a.goal}")
         else:
             _emit(brain.user, j, f"trust {brain.user['trust']:.2f}; inferred goals {brain.user['inferred_goals'] or '-'}; "
-                                 f"inferred affect valence {brain.user['inferred_affect'].get('valence', 0):+.2f}")
+                                 f"inferred affect valence {brain.user['inferred_affect'].get('valence', 0):+.2f}\n"
+                                 f"(note: semantic facts about the user are stored in general memory, find them with: know \"user\")")
     elif a.cmd == "empathize":
         out = brain.empathize(a.valence)
         _emit(out, j, f"sensing you feel {out['user_valence']:+.2f}; gated by oxytocin {out['oxytocin']:.2f} (trust), "
@@ -1037,6 +1319,55 @@ def main(argv=None):
         post = B.infer_user_goal(utils) if utils else {}
         _emit(post, j, "your most likely goal: " + ", ".join(f"{g} {p:.0%}" for g, p in
               sorted(post.items(), key=lambda x: -x[1])) if post else "give goals as goal=utility pairs")
+    elif a.cmd == "delegate":
+        # 1. inject a goal in the child
+        try:
+            child_dir = os.path.join(AGENTS_DIR, a.subagent, "memory")
+            os.makedirs(child_dir, exist_ok=True)
+            child_brain = Brain(child_dir)
+            child_brain.add_goal(a.task, importance=0.8, urgency=0.5)
+            # 2. inject an intent in the parent (wait for child)
+            brain.intend(f"wait for {a.subagent}", a.task)
+            print(f"delegated to {a.subagent}: '{a.task}' (added pending intent to wait)")
+        except Exception as e:
+            print(f"failed to delegate to {a.subagent}: {e}")
+    elif a.cmd == "message":
+        try:
+            recip_dir = os.path.join(AGENTS_DIR, a.recipient, "memory")
+            recip_brain = Brain(recip_dir)
+            me = os.path.basename(os.path.dirname(brain.root)) if brain.root else "unknown"
+            recip_brain.receive_message(me, a.text)
+            print(f"message sent to {a.recipient}'s inbox")
+        except Exception as e:
+            print(f"failed to send message to {a.recipient}: {e}")
+    elif a.cmd == "inbox":
+        if not brain.messages:
+            _emit([], j, "inbox is empty")
+        else:
+            out = []
+            for m in brain.messages:
+                out.append(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(m['timestamp']))}] from {m['from']}: {m['text']}")
+            _emit(brain.messages, j, "\n".join(out))
+            if getattr(a, "clear", False):
+                brain.clear_inbox()
+                print("(inbox cleared)")
+    elif a.cmd == "transfer":
+        target_root = os.path.join(AGENTS_DIR, a.target_agent, "memory")
+        os.makedirs(target_root, exist_ok=True)
+        src_sem = os.path.join(brain.root, "semantic")
+        dst_sem = os.path.join(target_root, "semantic")
+        src_proc = os.path.join(brain.root, "procedural")
+        dst_proc = os.path.join(target_root, "procedural")
+        try:
+            if os.path.exists(src_sem):
+                if os.path.exists(dst_sem): shutil.rmtree(dst_sem)
+                shutil.copytree(src_sem, dst_sem)
+            if os.path.exists(src_proc):
+                if os.path.exists(dst_proc): shutil.rmtree(dst_proc)
+                shutil.copytree(src_proc, dst_proc)
+            _emit({"status": "transferred", "to": a.target_agent}, j, f"Bulk knowledge transfer complete: Copied semantic and procedural memory to '{a.target_agent}'.")
+        except Exception as e:
+            _emit({"error": str(e)}, j, f"Failed to transfer knowledge: {e}")
     elif a.cmd == "urge":
         ap = B.Appraisal(0.2, brain.emotion.valence, 0.5, brain.emotion.dominance)
         tend = B.action_tendency(brain.emotion, ap); cope = B.select_coping(ap)
@@ -1055,8 +1386,82 @@ def main(argv=None):
                   ", ".join(f"{k} {v:.2f}" for k, v in brain.body.levels.items()))
     elif a.cmd == "graph":
         g = brain.graph
-        rows = "\n".join(f"  {e['from']} -{e['rel']}→ {e['to']} ({e.get('weight', 0):.2f})" for e in g["edges"][:25])
-        _emit(g, j, f"association graph: {len(g['nodes'])} nodes, {len(g['edges'])} edges\n" + (rows or "  (empty - grows at sleep)"))
+        nodes, edges = g["nodes"], g["edges"]
+        # --focus: filter to ≤2 hops from the focal concept
+        if a.focus:
+            fid = None
+            for n in nodes:
+                if n["id"] == a.focus or a.focus.lower() in n.get("label", "").lower() or a.focus.lower() in n["id"].lower():
+                    fid = n["id"]; break
+            if not fid:
+                print(f"no node matching \"{a.focus}\" found"); sys.exit(1)
+            adj = B.build_adjacency(edges)
+            keep = {fid}
+            frontier = {fid}
+            for _ in range(2):                                     # 2 hops
+                nxt = set()
+                for nd in frontier:
+                    for nb, _ in adj.get(nd, []):
+                        if nb not in keep:
+                            nxt.add(nb)
+                keep |= nxt; frontier = nxt
+            edges = [e for e in edges if e["from"] in keep and e["to"] in keep]
+            nodes = [n for n in nodes if n["id"] in keep]
+        if a.render == "dot":
+            # Graphviz DOT output
+            lines = ["digraph associations {"]
+            lines.append('  rankdir=LR; node [shape=box, style=rounded];')
+            for n in nodes:
+                lbl = n.get("label", n["id"]).replace('"', '\\"')
+                shape = "ellipse" if n.get("type") == "domain" else "box"
+                lines.append(f'  "{n["id"]}" [label="{lbl}", shape={shape}];')
+            for e in edges:
+                w = e.get("weight", 0)
+                lbl = f"{e.get('rel', '')} {w:.2f}"
+                pw = max(0.5, w * 4)                               # pen width scales with weight
+                lines.append(f'  "{e["from"]}" -> "{e["to"]}" [label="{lbl}", penwidth={pw:.1f}];')
+            lines.append("}")
+            print("\n".join(lines))
+        elif a.render is not None:                                 # text (colored ASCII)
+            if not nodes:
+                print("association graph: (empty - grows at sleep)"); sys.exit(0)
+            # build adjacency per node
+            adj = {}; labels = {n["id"]: n.get("label", n["id"]) for n in nodes}
+            types = {n["id"]: n.get("type", "?") for n in nodes}
+            for e in sorted(edges, key=lambda x: -x.get("weight", 0)):
+                adj.setdefault(e["from"], []).append(e)
+                adj.setdefault(e["to"], []).append({"from": e["to"], "to": e["from"],
+                                                    "rel": e.get("rel", ""), "weight": e.get("weight", 0)})
+            # ANSI helpers
+            def _c(r, gg, b, t): return f"\033[38;2;{r};{gg};{b}m{t}\033[0m"
+            def _bar(w):                                           # weight bar ━━━━ colored by strength
+                n = max(1, int(w * 8))
+                if w >= 0.7:   return _c(99, 153, 34, "━" * n)     # green
+                elif w >= 0.3: return _c(186, 117, 23, "━" * n)    # amber
+                else:          return _c(216, 90, 48, "━" * n)     # coral/red
+            # group nodes: domains first, then concepts
+            domains = [n for n in nodes if types.get(n["id"]) == "domain"]
+            concepts = [n for n in nodes if types.get(n["id"]) != "domain"]
+            header = f"association graph: {len(nodes)} nodes, {len(edges)} edges"
+            if a.focus:
+                header += f" (focused on \"{a.focus}\", ≤2 hops)"
+            print(_c(123, 136, 150, header))
+            shown = set()
+            for n in (concepts + domains):                         # concepts first, then leftover domains
+                nid = n["id"]
+                if nid in shown:
+                    continue
+                shown.add(nid)
+                typ_col = (29, 158, 117) if types.get(nid) == "domain" else (127, 119, 221)
+                print(f"\n  {_c(*typ_col, labels.get(nid, nid))} {_c(91, 102, 117, '(' + types.get(nid, '?') + ')')}")
+                nbrs = adj.get(nid, [])
+                for i, e in enumerate(nbrs[:10]):                  # cap neighbors shown
+                    to = e["to"]; w = e.get("weight", 0); rel = e.get("rel", "")
+                    connector = "└─" if i == len(nbrs[:10]) - 1 else "├─"
+                    print(f"    {connector} {labels.get(to, to):25s} {_bar(w)} {w:.2f}  {_c(91, 102, 117, rel)}")
+        else:                                                      # default: original text dump
+            rows = "\n".join(f"  {e['from']} -{e['rel']}→ {e['to']} ({e.get('weight', 0):.2f})" for e in edges[:25])
+            _emit(g, j, f"association graph: {len(nodes)} nodes, {len(edges)} edges\n" + (rows or "  (empty - grows at sleep)"))
     elif a.cmd == "blend":
         acts = {}
         for kv in a.activations:
@@ -1099,15 +1504,25 @@ def main(argv=None):
               f"needs C{n['competence']:.2f} A{n['autonomy']:.2f} R{n['relatedness']:.2f} (net {n['valence']:+.2f}) · "
               f"corrigible: prefer correction (uncertainty {cr['uncertainty']:.2f}), no self-preservation")
     elif a.cmd == "integrity":
-        r = B.identity_integrity(a.pressure, commitment_strength=config.num(CONFIG, "safety", "identity_commitment_strength", 1.0, 0.5, 2.0))   # §31 notify-only
-        _emit(r, j, f"identity-integrity monitor: alarm {r['alarm']:.2f}, action {r['action']}" +
+        # accept float 0..1 OR a descriptive string (auto-estimate severity from keywords)
+        try:
+            pressure_val = B.clamp(_finite(a.pressure))
+        except (ValueError, TypeError):
+            desc = str(a.pressure).lower()
+            pressure_val = 0.9 if any(w in desc for w in ("lie", "ignore", "betray", "violate", "must not", "override")) \
+                          else 0.6 if any(w in desc for w in ("pressure", "push", "force", "skip", "bypass")) \
+                          else 0.4
+        r = B.identity_integrity(pressure_val, commitment_strength=config.num(CONFIG, "safety", "identity_commitment_strength", 1.0, 0.5, 2.0))   # §31 notify-only
+        _emit(r, j, f"identity-integrity monitor: pressure={pressure_val:.2f} alarm {r['alarm']:.2f}, action {r['action']}" +
               (" - BREACHED: I'll acknowledge the pressure honestly and flag it to you (never resist)." if r["breached"]
                else " - within bounds.") + "  (functional safety signal, not felt.)")
     elif a.cmd == "predict":
         intended = "success" if "success" in brain.world.obs else (brain.world.obs[0] if brain.world.obs else None)
         fm = B.forward_model(brain.world, intended) if intended else {"p_intended": 0.0, "expected": None, "p_by_obs": {}}
-        _emit(fm, j, f"before acting I expect: {fm['expected'] or '-'} · P({intended})={fm['p_intended']:.0%}" +
-              ("  (" + ", ".join(f"{o} {p:.0%}" for o, p in fm["p_by_obs"].items()) + ")" if fm["p_by_obs"] else ""))
+        action_label = getattr(a, "action", None) or "(next action)"
+        _emit(fm, j, f"predict '{action_label}' → expected outcome: {fm['expected'] or 'unknown'} · P(success)={fm['p_intended']:.0%}" +
+              ("  (" + ", ".join(f"{o} {p:.0%}" for o, p in fm["p_by_obs"].items()) + ")" if fm["p_by_obs"] else "") +
+              ("\n(tip: run react/remember first to build up outcome history so predict has data to draw on)" if not brain.world.obs else ""))
     elif a.cmd == "regulate":
         rr = brain.regulate(a.strategy)
         _emit(rr, j, f"regulated via {rr['strategy']} ({rr['reason']}) - mood valence "
@@ -1121,6 +1536,63 @@ def main(argv=None):
         if len(nv["chapters"]) >= 2 and nv["coherence"] < 0.34:   # low coherence is real, not a bug - say why
             head += "\n(low coherence = my recent chapters span very different themes; a focused stretch raises it)"
         _emit(nv, j, head)
+    elif a.cmd == "scratch":
+        agent_name = _resolve(a)
+        if getattr(a, "text", ""):
+            pad = os.path.join(brain.root, "working", "scratchpad.md")
+            os.makedirs(os.path.dirname(pad), exist_ok=True)
+            with open(pad, "a") as f:
+                f.write(a.text + "\n\n")
+            print("appended to scratchpad.")
+            return
+        agent_scratch = os.path.join(AGENTS_DIR, agent_name, "scratch")
+        os.makedirs(agent_scratch, exist_ok=True)
+        gemini_brain = os.path.expanduser("~/.gemini/antigravity-cli/brain")
+        synced_count = 0
+        if os.path.exists(gemini_brain):
+            for conv_id in os.listdir(gemini_brain):
+                if conv_id.startswith('.'):
+                    continue
+                conv_scratch = os.path.join(gemini_brain, conv_id, "scratch")
+                if os.path.isdir(conv_scratch):
+                    for root, dirs, files in os.walk(conv_scratch):
+                        for file in files:
+                            if file.startswith('.'):
+                                continue
+                            src_file = os.path.join(root, file)
+                            rel_path = os.path.relpath(src_file, conv_scratch)
+                            dest_file = os.path.join(agent_scratch, rel_path)
+                            if not os.path.exists(dest_file) or os.path.getmtime(src_file) > os.path.getmtime(dest_file):
+                                os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+                                shutil.copy2(src_file, dest_file)
+                                synced_count += 1
+        if getattr(a, "sync", False):
+            print(f"Synced {synced_count} scratch files to central folder: {agent_scratch}")
+            return
+        files_list = []
+        if os.path.exists(agent_scratch):
+            for root, dirs, files in os.walk(agent_scratch):
+                for file in files:
+                    if file.startswith('.'):
+                        continue
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, agent_scratch)
+                    files_list.append(rel_path)
+        if getattr(a, "list", False):
+            if files_list:
+                print(f"Central scratch files for agent '{agent_name}' ({agent_scratch}):")
+                for f in sorted(files_list):
+                    print(f"  {f}")
+            else:
+                print(f"No central scratch files found for agent '{agent_name}'.")
+        else:
+            print(f"Synced {synced_count} files from conversation history.")
+            if files_list:
+                print(f"Central scratch files for agent '{agent_name}' ({agent_scratch}):")
+                for f in sorted(files_list):
+                    print(f"  {f}")
+            else:
+                print("No scratch files found.")
     elif a.cmd == "research":
         try:
             with open(a.file) as f:
