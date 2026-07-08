@@ -219,7 +219,6 @@ def test_user_trust_empathize():
     out, c = run("empathize", -0.5); assert c == 0
 
 def test_learning_mode_and_transfer(monkeypatch):
-    from agent import CONFIG
     import agent
     
     # create two agents

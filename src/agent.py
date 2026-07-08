@@ -1543,7 +1543,7 @@ def main(argv=None):
             os.makedirs(os.path.dirname(pad), exist_ok=True)
             with open(pad, "a") as f:
                 f.write(a.text + "\n\n")
-            print(f"appended to scratchpad.")
+            print("appended to scratchpad.")
             return
         agent_scratch = os.path.join(AGENTS_DIR, agent_name, "scratch")
         os.makedirs(agent_scratch, exist_ok=True)
