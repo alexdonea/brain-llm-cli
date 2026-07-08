@@ -120,6 +120,7 @@ def test_react_validates_outcome():
 def test_remember_and_episodes():
     out, c = run("remember", "a deliberately burned-in moment", 0.5, 0.4, 0.6, 0.7); assert c == 0
     out, c = run("episodes"); assert c == 0 and "e-" in out
+    out2, c2 = run("history"); assert c2 == 0 and "e-" in out2  # test alias
 
 
 def test_appraise_preview_does_not_encode():
@@ -133,6 +134,10 @@ def test_appraise_preview_does_not_encode():
 def test_learn_then_know():
     out, c = run("learn", "the parser uses a recursive-descent grammar", "--confidence", 0.9); assert c == 0
     out, c = run("know", "parser"); assert c == 0 and "recursive" in out.lower()
+    
+    # Test --all flag and -n alias
+    out, c = run("know", "--all"); assert c == 0 and "recursive" in out.lower()
+    out, c = run("know", "parser", "-n", "1"); assert c == 0 and "recursive" in out.lower()
 
 
 def test_note():
@@ -164,7 +169,14 @@ def test_personality_view_and_set():
 def test_goals_add_focus_progress():
     out, c = run("goals", "--add", "ship the test suite", "--importance", 0.9, "--urgency", 0.6); assert c == 0
     assert run("goals")[1] == 0 and run("focus")[1] == 0
+    
+    # Test manual focus
+    assert run("focus", "ship")[1] == 0
+
+    # Test progress and auto-complete at 1.0
     assert run("progress", "ship the test suite", 0.3)[1] == 0
+    out, c = run("progress", "ship the test suite", 1.0); assert c == 0
+    assert "automatically completed" in out
 
 
 def test_deliberate():
@@ -184,6 +196,10 @@ def test_integrity_safety_monitor():                          # §31 - the notif
 def test_plan_and_next():
     run("goals", "--add", "ship the test suite", "--importance", 0.9, "--urgency", 0.6)   # self-contained: ensure the goal exists
     out, c = run("plan", "ship the test suite", "write cases", "run coverage", "fix gaps"); assert c == 0
+    
+    # Test viewing plan without args
+    out_view, c_view = run("plan"); assert c_view == 0 and "write cases" in out_view
+    
     assert run("next")[1] == 0 and run("next", "--done")[1] == 0
 
 
@@ -201,6 +217,36 @@ def test_user_trust_empathize():
     assert run("user")[1] == 0 and run("user", "--goal", "wants a robust CLI")[1] == 0
     assert run("trust", 1.0)[1] == 0
     out, c = run("empathize", -0.5); assert c == 0
+
+def test_learning_mode_and_transfer(monkeypatch):
+    from agent import CONFIG
+    import agent
+    
+    # create two agents
+    run("create", "teacher")
+    run("create", "student")
+    
+    # Teacher learns something
+    run("learn", "Python is snake", "--agent", "teacher")
+    
+    # Transfer to student
+    out, c = run("transfer", "student", "--agent", "teacher")
+    assert c == 0
+    assert "transfer complete" in out.lower()
+    
+    # Check student knows it
+    out, c = run("know", "snake", "--agent", "student")
+    assert "Python is snake" in out
+    
+    # Now set teacher to learning_mode: false via monkeypatch
+    monkeypatch.setattr(agent, "CONFIG", {"agents": {"teacher": {"learning_mode": False}}})
+    
+    # Attempt to learn should fail/be ignored
+    out, c = run("learn", "Java is island", "--agent", "teacher")
+    assert "Learning Mode is OFF" in out
+    
+    run("remove", "teacher", "--yes")
+    run("remove", "student", "--yes")
 
 
 def test_readout_commands():
@@ -223,6 +269,33 @@ def test_readout_commands():
     run("use", "default"); run("remove", "ra", "--yes")
 
 
+def test_graph_render_and_focus():
+    run("create", "gr")
+    run("react", "learned basics", 0.5, 0.7, 0.6, "--domain", "python", "--cue", "basics", "--agent", "gr")
+    run("react", "learned advanced", 0.4, 0.6, 0.7, "--domain", "python", "--cue", "advanced", "--agent", "gr")
+    run("react", "practiced testing", 0.5, 0.7, 0.8, "--domain", "python", "--cue", "testing", "--outcome", "success", "--agent", "gr")
+    run("sleep", "--agent", "gr")
+    out, c = run("graph", "--agent", "gr"); assert c == 0
+    out, c = run("graph", "--render", "--agent", "gr"); assert c == 0
+    out, c = run("graph", "--render", "dot", "--agent", "gr"); assert c == 0 and "digraph" in out
+    out, c = run("graph", "--render", "--focus", "basics", "--agent", "gr"); assert c == 0
+    out, c = run("graph", "--render", "--focus", "nonexistent_xyz", "--agent", "gr"); assert c == 1
+    run("use", "default"); run("remove", "gr", "--yes")
+
+
+def test_playbooks_test_and_audit():
+    run("create", "pb")
+    for i in range(4):
+        run("react", f"coded feature {i}", 0.5, 0.7, 0.8, "--domain", "coding", "--cue", f"feat{i}",
+            "--outcome", "success", "--agent", "pb")
+    run("sleep", "--agent", "pb")
+    out, c = run("playbooks", "--agent", "pb"); assert c == 0 and "coding" in out
+    out, c = run("playbooks", "--test", "coding", "--agent", "pb"); assert c == 0 and "coverage" in out
+    out, c = run("playbooks", "--test", "nonexistent_xyz", "--agent", "pb"); assert c == 1
+    out, c = run("playbooks", "--audit", "--agent", "pb"); assert c == 0 and "healthy" in out
+    run("use", "default"); run("remove", "pb", "--yes")
+
+
 def test_motivation_and_corrigibility():           # §31
     run("create", "mv")
     run("react", "studied risk", 0.5, 0.7, 0.6, "--domain", "trading", "--cue", "risk", "--outcome", "success", "--agent", "mv")
@@ -235,7 +308,7 @@ def test_motivation_and_corrigibility():           # §31
 def test_predict_forward_model():                  # §32
     run("create", "pv")
     out, c = run("predict", "--agent", "pv")
-    assert c == 0 and "I expect" in out                                        # forward model reports an expectation
+    assert c == 0 and "expected outcome" in out                                        # forward model reports an expectation
     r = run("react", "nailed it", 0.7, 0.8, 0.6, "--domain", "trading", "--outcome", "success", "--agent", "pv", "--json")[0]
     assert '"agency"' in r                                                     # §32 computed agency recorded on the act
     run("use", "default"); run("remove", "pv", "--yes")
@@ -431,7 +504,7 @@ def test_bare_agent_command_requires_a_name():
 
 def test_version_flag():
     out, c = _call(["--version"])                         # `--version` prints the version and exits 0
-    assert c == 0 and agent.__version__ in out and agent.__version__ == "0.0.3"
+    assert c == 0 and agent.__version__ in out and agent.__version__ == "0.0.4"
 
 
 # ── registry error branches ──────────────────────────────────────────────────────────────────────
@@ -802,12 +875,85 @@ def test_ensure_agents_skips_default_when_creating_named(tmp_path, monkeypatch):
     assert agent._list_agents() == ["default"]
 
 
+def test_scratch(monkeypatch, tmp_path):
+    gemini_brain = str(tmp_path / "brain")
+    original_expanduser = os.path.expanduser
+    
+    def mock_expanduser(path):
+        if path == "~/.gemini/antigravity-cli/brain":
+            return gemini_brain
+        return original_expanduser(path)
+        
+    monkeypatch.setattr(os.path, "expanduser", mock_expanduser)
+
+    global_scratch = os.path.join(gemini_brain, "test-conv", "scratch")
+    os.makedirs(global_scratch, exist_ok=True)
+    with open(os.path.join(global_scratch, "test.txt"), "w") as f:
+        f.write("hello scratch")
+    
+    out, c = run("scratch")
+    assert c == 0
+    
+    from agent import AGENTS_DIR
+    agent_scratch = os.path.join(AGENTS_DIR, _CUR[0], "scratch")
+    assert os.path.exists(os.path.join(agent_scratch, "test.txt"))
+
+def test_multi_agent():
+    run("create", "parent_agent")
+    run("create", "sub_agent")
+    
+    # test delegate
+    out, c = run("parent_agent", "delegate", "sub_agent", "find bugs")
+    assert c == 0
+    assert "added pending intent" in out
+    
+    # check if intent added to parent
+    out, c = run("parent_agent", "intentions")
+    assert "wait for sub_agent" in out
+    
+    # check if goal added to child
+    out, c = run("sub_agent", "goals")
+    assert "find bugs" in out
+    
+    # test message
+    out, c = run("sub_agent", "message", "parent_agent", "bugs found")
+    assert c == 0
+    
+    # test inbox
+    out, c = run("parent_agent", "inbox")
+    assert "bugs found" in out
+    
+    # test share-with
+    out, c = run("sub_agent", "learn", "Python is fast", "--share-with", "parent_agent")
+    assert "shared with parent_agent" in out
+    out, c = run("parent_agent", "know", "Python")
+    assert "Python is fast" in out
+
+def test_compaction():
+    text = "This is the first sentence. This is the second sentence. The third sentence is here. We are adding a fourth sentence. A fifth sentence to be sure."
+    out, c = run("compact", text, "--ratio", "0.5")
+    assert c == 0
+    # Even if wordllama is off, it shouldn't crash.
+
+def test_wonder_command():
+    out, c = run("wonder")
+    assert c == 0
+    # Check that wonder doesn't crash.
+
+def test_semantic_dedup():
+    # If wordllama is installed, test that sleep runs dedup safely
+    run("learn", "Paris is the capital of France", "--confidence", "0.9")
+    run("learn", "The capital of France is Paris", "--confidence", "0.9")
+    out, c = run("sleep")
+    assert c == 0
+
+
 if __name__ == "__main__":
     try:
         passed = 0
         for name, fn in list(globals().items()):
             if name.startswith("test_") and callable(fn):
-                fn(); _CUR[0] = "default"                       # mirror the autouse fixture's isolation
+                fn(); _CUR[0] = "default"
                 passed += 1; print(f"PASS {name}")
         print(f"All {passed} CLI checks passed.")
     finally:

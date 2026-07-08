@@ -142,8 +142,13 @@ def snapshot(brain):
         "focus": (ws.get("focus") or "-"),
         "nepi": len(brain.episodes), "nfacts": len(brain.facts),
         "nskills": len(brain.efficacy), "ngoals": len(brain.self_model.goals),
+        "ncompleted_goals": getattr(brain.self_model, "completed_goals", 0),
         "last_feel": (last.get("feeling", {}) or {}).get("word", "-"),
         "last_sal": float(last.get("salience", 0.0) or 0.0),
+        "trust": brain.user.get("trust", 0.5),
+        "attn_mode": B.attention_control(brain.attention)["mode"] if hasattr(B, "attention_control") else "-",
+        "indicators": " ".join([k for k, v in B.consciousness_indicators()["indicators"].items() if v["score"] == 1.0]),
+        "calibration": round(B.calibration_error(brain.calibration), 3) if brain.calibration else 0.0,
     }
 
 
@@ -236,8 +241,12 @@ def _dash(snap, flow=""):
         f" {_fg(HEAD, 'focus'.ljust(9))}{_fg(TEXT, str(snap['focus'])[:24])}",
         head("memory"),
         f" {_fg(HEAD, 'episodes'.ljust(9))}{_fg(TEXT, str(snap['nepi']))}   {_fg(HEAD, 'facts ')}{_fg(TEXT, str(snap['nfacts']))}",
-        f" {_fg(HEAD, 'skills'.ljust(9))}{_fg(TEXT, str(snap['nskills']))}   {_fg(HEAD, 'goals ')}{_fg(TEXT, str(snap['ngoals']))}",
+        f" {_fg(HEAD, 'skills'.ljust(9))}{_fg(TEXT, str(snap['nskills']))}   {_fg(HEAD, 'goals ')}{_fg(TEXT, str(snap['ngoals']) + ' active, ' + str(snap['ncompleted_goals']) + ' done')}",
         f" {_fg(HEAD, 'last'.ljust(9))}{_fg(TEXT, snap['last_feel'])}  sal {_fg(TEXT, format(snap['last_sal'], '.2f'))}",
+        head("cognition"),
+        f" {_fg(HEAD, 'trust'.ljust(9))}{_fg(TEXT, format(snap['trust'], '.2f'))}   {_fg(HEAD, 'attn ')}{_fg(TEXT, snap['attn_mode'])}",
+        f" {_fg(HEAD, 'conscious'.ljust(9))}{_fg(TEXT, str(snap['indicators']))[:28]}",
+        f" {_fg(HEAD, 'calib_ECE'.ljust(9))}{_fg(TEXT, format(snap['calibration'], '.3f'))}",
     ]
     return rows
 

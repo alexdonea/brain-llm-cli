@@ -84,3 +84,31 @@ def test_last_activation_returns_the_last_valid_record(tmp_path):
     (wk / "activations.jsonl").write_text('{"t": 1.0, "region": "ok"}\n{ this final line is torn\n', encoding="utf-8")
     rec = lb.last_activation(str(tmp_path))
     assert rec is not None and rec["t"] == 1.0
+
+
+def test_semantic_dedup_facts(monkeypatch):
+    np = pytest.importorskip("numpy")
+    monkeypatch.setattr(sm, "is_ready", lambda home: True)
+    
+    # Fake embed: maps "dup1" and "dup2" to the same vector, others to orthogonal vectors
+    def fake_embed(texts, home):
+        vecs = []
+        for t in texts:
+            if "dup" in t:
+                vecs.append([1.0, 0.0, 0.0])
+            else:
+                vecs.append([0.0, 1.0, 0.0])
+        return np.asarray(vecs, dtype="float32")
+    
+    monkeypatch.setattr(sm, "embed", fake_embed)
+    
+    facts = [
+        {"id": "f-1", "text": "dup1"},
+        {"id": "f-2", "text": "dup2"},    # should replace f-1 because it's newer and similar
+        {"id": "f-3", "text": "unique"}
+    ]
+    
+    deduped = sm.semantic_dedup_facts(facts, home="fake", threshold=0.9)
+    assert len(deduped) == 2
+    assert deduped[0]["id"] == "f-2"
+    assert deduped[1]["id"] == "f-3"

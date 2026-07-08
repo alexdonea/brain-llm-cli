@@ -14,7 +14,7 @@
 
 # ---- system ------------------------------------------------------------------
 system:
-  version: "0.0.3"                 # The current version of the brain-llm CLI
+  version: "0.0.4"                 # The current version of the brain-llm CLI
 
 # ---- session -----------------------------------------------------------------
 # Operator "house rules" surfaced at the foot of every `wake` (session start), so
@@ -23,6 +23,10 @@ session:
   directives:
     - "Keep only one task in focus per session; finish or hand it off before starting another."
     - "If the session context is getting long, tell the user you may start making mistakes and suggest a fresh session."
+  guardrails:
+    - "Emotion-focused coping re-prioritizes attention/goals; it must never deny facts or override correctness."
+  governance:
+    - "Always tag facts with context prefixes (e.g., [User Profile], [Project X]) for better semantic retrieval."
 
 # ---- persona -----------------------------------------------------------------
 # How the agent PRESENTS itself to the user (a wake-time behaviour directive).
@@ -103,3 +107,9 @@ display:
   prog: brain-llm                     # launcher name shown in --help and hints (env override: BRAIN_PROG)
   live_step_seconds: 0.55             # `live` animation dwell time between paints, seconds (lower = faster)   [>0]
   live_default_flow: react            # `live` default pathway when none given   react | recall | sleep
+
+# ---- agents ------------------------------------------------------------------
+# Per-agent overrides. Use this to freeze a specific agent's memory in production.
+agents:
+  aria_worker:                        # example agent name
+    learning_mode: false              # when false, memory mutations (react, learn, sleep, etc.) are blocked

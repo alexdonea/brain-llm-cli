@@ -2,11 +2,48 @@
 
 All notable changes to this project. This release covers everything added on top of the initial project.
 
+## [0.0.4]
+
+### Added
+- **The Thinking Protocol (J-Space Externalization):** Native protocol instruction forcing the LLM to open a `<thinking>` block before running any memory-altering command. This externalizes the internal "Jacobian space" representations into tokens, significantly improving semantic extraction accuracy, task safety, and preventing context pollution, inspired by [Anthropic's Global Workspace research](https://www.anthropic.com/research/global-workspace).
+- **Epistemological Tracking:** The default templates now officially teach and enforce the `--confidence` and `--source` flags when using `learn` and `react`, tying the LLM's generated J-Space insight certainty directly to the underlying associative math graph.
+- **Multi-Agent Orchestration & Cross-Memory Injection:** Native support for agentic hierarchies via a safe "Hive Mind" injection protocol. The `delegate <subagent> <task>` command injects an executive goal directly into a sub-agent's brain. Sub-agents can reply using `message <parent> <text>`, which writes to the recipient's `social/inbox.yaml` file, readable via `inbox [--clear]`. Sub-agents can also use `learn --share-with` to cross-pollinate facts. All memory injections are strictly limited to communication and goal interfaces; a peer can never modify another agent's personality, mood state, or episodic history, preserving orchestrator logic and safety.
+- **"Claude Dreaming" (Semantic Memory Consolidation):** The `sleep` command now triggers an asynchronous, LLM-free semantic deduplication phase. Inspired by [Anthropic's Dreaming research (May 2026)](https://www.anthropic.com/research/dreaming), it uses local dense embeddings (WordLlama) to find and unify contradictory or redundant facts in long-term memory, ensuring the "neocortex" never bloats with repeated lessons.
+- **Shared Semantic Memory (Hive Mind):** The `learn` command now accepts `--share-with <parent>`, allowing sub-agents (e.g. researchers) to cross-pollinate distilled facts directly into their parent's knowledge graph before exiting.
+- **Context Compaction (`compact`):** Command for "Tool result clearing" via semantic extraction (`compact <text> --ratio 0.3`). Utilizes WordLlama to algorithmically summarize massive logs into only the most relevant sentences.
+- **The General Curiosity Engine (`wonder`):** Added the `wonder` command which analyzes the graph's Cosine Similarity matrix to extract "isolated nodes" (facts with the lowest centrality). This explicitly bounds the semantic map, letting the agent explore missing knowledge gaps when idle. Enhanced `AGENT-BRAIN.MD` template with a mandatory `<curiosity>` tag to formalize gap tracking during reflection.
+- **Auto-Retrieval User Profile:** The `wake` command now automatically searches the semantic memory for facts relating to user identity, language, and core preferences, injecting a dynamic "User Profile" into the waking context to prevent passive semantic memory loss.
+- **Guardrails & Governance Configs:** `config.yaml` now supports `session.guardrails` and `session.governance`, mapping hard safety constraints and operational standards directly into the agent's startup context.
+- **Semantic Tagging Convention:** Updated the memory protocols to strongly advise contextual metadata tagging (e.g., `learn "[User Profile] speaks English"`) to significantly boost `wordllama` semantic search recall.
+- **Architectural Roadmap:** Generated a comprehensive `FUTURE_DIRECTIONS.md` outlining the architectural path to fully autonomous daemons and sub-symbolic macro execution.
+- **`prompt` Command (File-less Setup):** Added `brain-llm prompt --name <agent>` which outputs the `AGENT-BRAIN.MD` template directly to `stdout`. Perfect for injecting context into Cursor, Claude, or other LLMs without polluting the workspace with physical Markdown files.
+- **`graph --render [text|dot]`** — visualize the association graph. `--render` (or `--render text`) shows
+  a colored ASCII tree with weight bars (green ≥0.7, amber ≥0.3, red <0.3). `--render dot` emits Graphviz
+  DOT on stdout. `--focus <concept>` filters to ≤2 hops from a concept. Zero new dependencies.
+- **`playbooks --test <domain>` / `playbooks --audit`** — test a playbook's step coverage against recent
+  episodes (✓/✗ per step with suggestions), or audit all playbooks for atrophy, staleness, and regression.
+  Runtime methods: `Brain.test_playbook(domain)`, `Brain.audit_playbooks()`. 5 new tests.
+- **`goals --complete`** — mark a goal as completed and remove it from the executive hierarchy.
+  Supports substring matching (e.g. `--complete "ship"` matches `"ship v1"`). Runtime method:
+  `Brain.complete_goal(desc)`. 4 new tests.
+
+### Fixed
+- **CLI Argument Robustness & UX:**
+  - `predict`: Fixed a crash when parsing multi-word action strings (added `action` positional argument).
+  - `integrity`: Modified to accept descriptive text strings in addition to floats, mapping severity automatically based on keywords (e.g. "force", "lie"). Added strict `clamp()` validation to prevent raw unclamped floats (e.g. 100.0) from being accepted and printed in the UI.
+  - `appraise`: Refactored to "Smart Appraise". Variables (`valence`, `goal_relevance`, `control`) are now optional; if omitted, the CLI auto-infers them using semantic distance, learned values, and competency.
+  - `react`: Explicitly documented valid `--outcome` choices (`success`, `failure`, `insight`, `surprise`) in the help text and templates.
+  - `scratch`: Extended to accept an optional string argument (`scratch "<text>"`) to directly append notes to the scratchpad without relying purely on `--list` or `--sync`.
+  - `intend`: Clarified the two-argument syntax (`intend "<trigger>" "<intent>"`) natively inside the `prompt` instructions and guides.
+  - Improved UX output strings for `deliberate`, `values`, `lookahead`, `know`, and `user` to explain internal metrics (like EVC) and how systems accumulate data over time.
+### Removed
+- **Legacy Instruction Files:** Deleted the `llm-instructions/` directory. The legacy markdown templates (`generalist.md`, `researcher.md`, etc.) became obsolete since `src/templates.py` now dynamically injects a unified, zero-setup protocol directly into `AGENT-BRAIN.MD` upon `init`.
+
 ## [0.0.3]
 
 ### Added
 
-- **Comprehensive User Guide:** Added `llm-instructions/USER_GUIDE.md`, a structured guide (from basics to advanced neuro-sim) with explicit, copy-pasteable natural language prompts for every step of the agent's lifecycle.
+- **Comprehensive User Guide:** Added `USER_GUIDE.md`, a structured guide (from basics to advanced neuro-sim) with explicit, copy-pasteable natural language prompts for every step of the agent's lifecycle.
 - **`config.yaml` — one optional, committed config for every safe knob.** Each value is validated and clamped,
   so a bad entry can never put the engine into a degenerate state; absent, behaviour is byte-for-byte today's.
   It covers the data home and program name, semantic on/off (env `BRAIN_SEMANTIC`), the `recall`/`know`/
@@ -27,7 +64,7 @@ All notable changes to this project. This release covers everything added on top
 
 - **Zero-Setup Generalist Mode:** The `brain-llm init` command now automatically generates the full Generalist Session Loop directly inside `AGENT-BRAIN.MD`. Users no longer need to copy-paste templates; pointing the LLM to the init file is enough to bootstrap a fully capable agent.
 - **Init Safety:** The `init` command now fails safely if you try to initialize a directory with an agent name that already exists, preventing accidental cross-contamination of memories between different projects.
-- **Renamed `prompts/` to `llm-instructions/`** to make the directory's purpose immediately intuitive to end-users.
+- **Renamed `prompts/` directory:** The directory structure was simplified to make the single source of truth clearer.
 
 ### Removed
 
@@ -150,7 +187,7 @@ Python plus PyYAML for the on-disk stores.
 - **Per-vendor entry files** (`CLAUDE.md`, `GEMINI.md`) pointed a host into character.
 - **Two seeded agents** out of the box (`atlas` and `default`).
 
-- **Ready-to-use prompts** in `inputs-example/` (trader, researcher, news monitor).
+- **`USER_GUIDE.md`** — A full set of copy-pasteable prompts to start the agent in various roles.
 - **A documented research basis** in `docs/` (the memory-keeper rubric, an evaluation harness, a
   psychological battery, a brain-coverage map, a consciousness-indicator scorecard) and `MEMORY-PROTOCOL.md`.
 - The project and command were named `brain-lmm`. The only dependency was PyYAML.
